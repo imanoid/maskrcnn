@@ -193,46 +193,57 @@ class SqueezeNetBuilder(GraphBuilder):
         node = input_node
         if input_keepprob != None:
             node = self.add_dropout_layer(node, input_keepprob)
-        return self.add_conv_layer(node, first_conv_kernels, kernel_size=first_conv_ksize, strides=first_conv_stride, batch_norm=batch_norm, is_training=is_training)
+        node = self.add_conv_layer(node, first_conv_kernels, kernel_size=first_conv_ksize, strides=first_conv_stride, batch_norm=batch_norm, is_training=is_training)
+        node = self.add_maxpooling_layer(node)
+        return node
 
     def build_trunk(self,
                     root_output_node,  # input graph node
-                    segments,  # segment configs
+                    n_modules,  # number of modules
+                    pooled_firemodules,  # modules at which to pool
                     base_outputs = 128,  # n_outputs of first fire module
+                    incr_outputs = 128,  # step by which to increase output depth every freq units
+                    freq = 2, # frequency at which num of outputs is increased by incr_outputs
                     squeeze_ratio = 0.125,  # percentage of squeeze kernels in all kernels (squeeze and expand)
                     p_3x3 = 0.5,  # percentage of 3x3 kernels in expand kernels
                     skip_identity = True,  # true if residual identity connections should be added
                     batch_norm = False,  # if True, batch normalization is added
                     is_training = None,  # pass variable indicating if network is training if using batch_norm
                     conv_keepprob = None  # conv keep probability for dropout
+
                     ):
         segment_tails = []
         node = root_output_node
         n_module_outputs = base_outputs
 
-        for i_segment, segment in enumerate(segments):
-            with tf.name_scope("TrunkSegment"):
-                for module in range(segment):
-                    succeeds_pooling = module == 0
-                    precedes_pooling = module == segment - 1
+        pool_outputs = False
+        pooled_last_outputs = False
 
-                    if (precedes_pooling):
-                        n_module_outputs *= 2
+        for i_module in range(n_modules):
+            if i_module % freq == 0 and i_module > 0:
+                n_module_outputs += incr_outputs
+            pooled_last_outputs = pool_outputs
+            pool_outputs = (i_module in pooled_firemodules)
 
-                    node = self.add_fire_module(node,
-                                                n_module_outputs,
-                                                squeeze_ratio=squeeze_ratio,
-                                                p_3x3=p_3x3,
-                                                skip_identity=skip_identity,
-                                                batch_norm=batch_norm,
-                                                is_training=is_training,
-                                                conv_keepprob=conv_keepprob,
-                                                succeeds_pooling=succeeds_pooling,
-                                                precedes_pooling=precedes_pooling)
+            print("i_module=%d" % i_module)
+            print("node.shape=%s" % str(node.shape))
+            print("n_module_outputs=%d" % n_module_outputs)
+
+            node = self.add_fire_module(node,
+                                        n_module_outputs,
+                                        squeeze_ratio = squeeze_ratio,
+                                        p_3x3 = p_3x3,
+                                        skip_identity = skip_identity,
+                                        residual_input = None,
+                                        batch_norm = batch_norm,
+                                        is_training = is_training,
+                                        conv_keepprob = conv_keepprob,
+                                        activate_input = not pooled_last_outputs,
+                                        activate_output = pool_outputs)
+
+            if pool_outputs:
+                node = self.add_maxpooling_layer(node)
                 segment_tails.append(node)
-
-                if i_segment < len(segments) - 1:
-                    node = self.add_maxpooling_layer(node)
 
         return segment_tails
 
@@ -269,7 +280,7 @@ class SqueezeNetBuilder(GraphBuilder):
                 node = self.add_upsampling_layer(segment_tail)
             else:
                 with tf.name_scope("UpsamplingSegment"):
-                    node = self.add_fire_module(node, n_outputs, residual_input=segment_tail, squeeze_ratio=squeeze_ratio, p_3x3=p_3x3, batch_norm=batch_norm, is_training=is_training, skip_identity=skip_identity, succeeds_pooling=True, precedes_pooling=True)
+                    node = self.add_fire_module(node, n_outputs, residual_input=segment_tail, squeeze_ratio=squeeze_ratio, p_3x3=p_3x3, batch_norm=batch_norm, is_training=is_training, skip_identity=skip_identity, activate_input=True, activate_output=True)
                     node = self.add_upsampling_layer(node)
 
         return node
@@ -284,8 +295,8 @@ class SqueezeNetBuilder(GraphBuilder):
                         batch_norm = False,  # if True, batch normalization is added
                         is_training = None,  # pass variable indicating if network is training if using batch_norm
                         conv_keepprob = None,  # conv keep probability for dropout
-                        succeeds_pooling = False, # true of the module comes after a pooling layer
-                        precedes_pooling = False # true if the module comes before a pooling layer
+                        activate_input = True,  # true of the module comes after a pooling layer
+                        activate_output = False  # true if the module comes before a pooling layer
                         ):
         assert(type(n_outputs) == int)
 
@@ -296,7 +307,7 @@ class SqueezeNetBuilder(GraphBuilder):
 
             squeeze_input_node = input_node
 
-            if not succeeds_pooling:
+            if activate_input:
                 if batch_norm:
                     squeeze_input_node = self.add_batch_norm(input_node, is_training=is_training, global_norm=True)
                 squeeze_input_node = tf.nn.relu(squeeze_input_node)
@@ -325,7 +336,7 @@ class SqueezeNetBuilder(GraphBuilder):
             if input_channels == n_outputs and skip_identity:
                 output_node = tf.add(input_node, output_node)
 
-            if precedes_pooling:
+            if activate_output:
                 if batch_norm:
                     output_node = self.add_batch_norm(output_node, is_training=is_training, global_norm=True)
                 output_node = tf.nn.relu(output_node)

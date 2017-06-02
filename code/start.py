@@ -7,11 +7,13 @@ import training
 import os
 
 import util
+import graph_builder
 
 if __name__ == "__main__":
+    builder = graph_builder.SqueezeNetBuilder()
     n_outputs = 19
     input_resolution = (256, 256)
-    voc_path = "/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012"
+    voc_path = "/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012"
     img_dir = os.path.join(voc_path, 'JPEGImages')
     ann_dir = os.path.join(voc_path, 'Annotations')
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
@@ -28,13 +30,16 @@ if __name__ == "__main__":
         inputs = tf.placeholder(tf.float32, [None, input_resolution[0], input_resolution[1], 3])
         true_outputs = tf.placeholder(tf.float32, [None, n_outputs])
 
-        outputs = resnet_v2.resnet_v2_50(inputs, n_outputs,
-                                   global_pool=True)
+        is_training = tf.placeholder(tf.bool)
+        input_keepprob = tf.placeholder(builder.dtype)
+        conv_keepprob = tf.placeholder(builder.dtype)
+        fc_keepprob = tf.placeholder(builder.dtype)
 
-        for element in outputs[1]:
-            print(str(element), str(outputs[1][element]))
+        root_output = builder.build_root(inputs, input_keepprob=input_keepprob)
+        segment_tails = builder.build_trunk(root_output, 16, [2, 6, 12, 15], conv_keepprob=conv_keepprob)
+        outputs = builder.build_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob)
 
-        logits = tf.reshape(outputs[0], [-1, n_outputs])
+        logits = tf.reshape(outputs, [-1, n_outputs])
 
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=true_outputs)
 
@@ -58,27 +63,24 @@ if __name__ == "__main__":
 
             while step < max_epochs:
                 batch_samples, batch_labels = loader.load_trainset_random_minibatch(batch_size)
-                [train_loss, train_acc, _] = sess.run(
-                    [loss, accuracy, optimiser],
-                    feed_dict={inputs: batch_samples,
-                               true_outputs: batch_labels})
+                [train_loss, train_acc, _] = sess.run([loss, accuracy, optimiser],
+                                                      feed_dict={inputs: batch_samples,
+                                                                 true_outputs: batch_labels,
+                                                                 is_training: True,
+                                                                 input_keepprob: .95,
+                                                                 conv_keepprob: .9,
+                                                                 fc_keepprob: .6})
 
-                if step % 100 == 0:
-                    # train_loss, train_acc = sess.run([self.cost, self.accuracy],
-                    #                                 feed_dict={self.x: batch_samples,
-                    #                                            self.y: batch_labels,
-                    #                                            layer1_keep_prob: 1,
-                    #                                            layer2_keep_prob: 1,
-                    #                                            layer3_keep_prob: 1})
-
-                    pred_y, test_loss, test_acc = sess.run([logits, loss, accuracy],
-                                                                    feed_dict={inputs: test_dataset,
-                                                                    true_outputs: test_labels})
-
+                if True: # step % 100 == 0:
+                    test_loss, test_acc = sess.run([loss, accuracy],
+                                                   feed_dict={inputs: test_dataset,
+                                                              true_outputs: test_labels,
+                                                              is_training: False,
+                                                              input_keepprob: 1,
+                                                              conv_keepprob: 1,
+                                                              fc_keepprob: 1})
 
                     print("Epoch " + str(step))
-                    # print(str(pred_y[0, :]))
-                    # print(str(batch_labels[0, :]))
                     print("Training Loss={:.6f}".format(train_loss))
                     print("Training Accuracy={:.6f}".format(train_acc))
                     print("Test Loss={:.6f}".format(test_loss))
@@ -89,7 +91,11 @@ if __name__ == "__main__":
             print ("Training finished!")
             test_loss, test_acc = sess.run([loss, accuracy],
                                            feed_dict={inputs: valid_dataset,
-                                                      true_outputs: valid_labels})
+                                                      true_outputs: valid_labels,
+                                                      is_training: False,
+                                                      input_keepprob: 1,
+                                                      conv_keepprob: 1,
+                                                      fc_keepprob: 1})
 
             print("Validation Loss=" + "{:.6f}".format(test_loss))
             print("Validation Accuracy=" + "{:.6f}".format(test_acc))
