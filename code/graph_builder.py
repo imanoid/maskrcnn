@@ -210,8 +210,8 @@ class SqueezeNetBuilder(GraphBuilder):
                     batch_norm = False,  # if True, batch normalization is added
                     is_training = None,  # pass variable indicating if network is training if using batch_norm
                     conv_keepprob = None  # conv keep probability for dropout
-
                     ):
+
         segment_tails = []
         node = root_output_node
         n_module_outputs = base_outputs
@@ -224,10 +224,6 @@ class SqueezeNetBuilder(GraphBuilder):
                 n_module_outputs += incr_outputs
             pooled_last_outputs = pool_outputs
             pool_outputs = (i_module in pooled_firemodules)
-
-            print("i_module=%d" % i_module)
-            print("node.shape=%s" % str(node.shape))
-            print("n_module_outputs=%d" % n_module_outputs)
 
             node = self.add_fire_module(node,
                                         n_module_outputs,
@@ -280,7 +276,7 @@ class SqueezeNetBuilder(GraphBuilder):
                 node = self.add_upsampling_layer(segment_tail)
             else:
                 with tf.name_scope("UpsamplingSegment"):
-                    node = self.add_fire_module(node, n_outputs, residual_input=segment_tail, squeeze_ratio=squeeze_ratio, p_3x3=p_3x3, batch_norm=batch_norm, is_training=is_training, skip_identity=skip_identity, activate_input=True, activate_output=True)
+                    node = self.add_fire_module(node, n_outputs, residual_input=segment_tail, squeeze_ratio=squeeze_ratio, p_3x3=p_3x3, batch_norm=batch_norm, is_training=is_training, skip_identity=skip_identity, activate_input=True, activate_output=True, conv_keepprob=conv_keepprob)
                     node = self.add_upsampling_layer(node)
 
         return node

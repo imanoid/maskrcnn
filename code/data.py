@@ -7,7 +7,6 @@ import voc_utils
 from scipy import ndimage, misc
 import matplotlib.pyplot as plt
 import abc
-
 import util
 
 import random
@@ -59,6 +58,30 @@ class PascalVocLoader(object):
 
         self.labels = None
 
+    def show_image_per_label(self):
+        labels = self.get_labels()
+
+        total_images = 0
+        for label in labels:
+            # get all image file names from this label
+            label_files = self._list_files_from_label(label, "trainval")
+            total_images += len(label_files)
+            print("%s: %d" % (label, len(label_files)))
+            img = self._load_image(random.choice(label_files))
+            plt.imshow(img)
+            plt.show()
+        print("total: %d" % total_images)
+
+    def get_labels(self):
+        all_files = os.listdir(self.set_dir)
+        labels = sorted(list(set([filename.replace('.txt', '').strip().split('_')[0] for filename in all_files])))
+
+        labels.remove("train")
+        labels.remove("trainval")
+        labels.remove("val")
+
+        return labels
+
     def initialize(self, reset=False):
         dataset_index_file = os.path.join(self.pickle_dir, "dataset.pickle")
         if os.path.exists(dataset_index_file) and not reset:
@@ -75,11 +98,7 @@ class PascalVocLoader(object):
             self.labels = dataset_index["labels"]
         else:
             # initialize classification
-            all_files = os.listdir(self.set_dir)
-            labels = sorted(list(set([filename.replace('.txt', '').strip().split('_')[0] for filename in all_files])))
-            labels.remove("train")
-            labels.remove("trainval")
-            labels.remove("val")
+            labels = self.get_labels()
 
             self.labels = labels
 
@@ -146,7 +165,14 @@ class PascalVocLoader(object):
 
     def load_trainset_random_minibatch(self, batch_size):
         minibatch_file = random.sample(self.minibatch_files, 1)
-        return cPickle.load(open(minibatch_file[0], "rb"))
+        batch_dataset, batch_labels = cPickle.load(open(minibatch_file[0], "rb"))
+
+        if batch_dataset.shape[0] <= batch_size:
+            return batch_dataset, batch_labels
+
+        permutation = np.random.permutation(batch_dataset.shape[0])
+
+        return batch_dataset[permutation[0:batch_size], :, :], batch_labels[permutation[0:batch_size]]
 
     def _split_into_minibatches(self, train_files, train_labels):
         n_samples = len(train_files)
