@@ -181,36 +181,37 @@ class SqueezeNetBuilder(GraphBuilder):
     def __init__(self, dtype = tf.float32):
         GraphBuilder.__init__(self, dtype)
 
-    def build_root(self,
-                   input_node,  # input graph node
+    def add_root(self,
+                 input_node,  # input graph node
                    first_conv_ksize = 7,  # kernel size of first convolution
                    first_conv_stride = 2,  # stride of first convolution
                    first_conv_kernels = 96,  # number of kernels in first convolution layer
                    input_keepprob = None,  # input keep probability for dropout
                    batch_norm = False,
-                   is_training = None
-                   ):
-        node = input_node
-        if input_keepprob != None:
-            node = self.add_dropout_layer(node, input_keepprob)
-        node = self.add_conv_layer(node, first_conv_kernels, kernel_size=first_conv_ksize, strides=first_conv_stride, batch_norm=batch_norm, is_training=is_training)
-        node = self.add_maxpooling_layer(node)
-        return node
+                 is_training = None
+                 ):
+        with tf.name_scope("InputSegment"):
+            node = input_node
+            if input_keepprob != None:
+                node = self.add_dropout_layer(node, input_keepprob)
+            node = self.add_conv_layer(node, first_conv_kernels, kernel_size=first_conv_ksize, strides=first_conv_stride, batch_norm=batch_norm, is_training=is_training)
+            node = self.add_maxpooling_layer(node)
+            return node
 
-    def build_trunk(self,
-                    root_output_node,  # input graph node
-                    n_modules,  # number of modules
-                    pooled_firemodules,  # modules at which to pool
-                    base_outputs = 128,  # n_outputs of first fire module
-                    incr_outputs = 128,  # step by which to increase output depth every freq units
-                    freq = 2, # frequency at which num of outputs is increased by incr_outputs
-                    squeeze_ratio = 0.125,  # percentage of squeeze kernels in all kernels (squeeze and expand)
-                    p_3x3 = 0.5,  # percentage of 3x3 kernels in expand kernels
-                    skip_identity = True,  # true if residual identity connections should be added
-                    batch_norm = False,  # if True, batch normalization is added
-                    is_training = None,  # pass variable indicating if network is training if using batch_norm
-                    conv_keepprob = None  # conv keep probability for dropout
-                    ):
+    def add_trunk(self,
+                  root_output_node,  # input graph node
+                  n_modules,  # number of modules
+                  pooled_firemodules,  # modules at which to pool
+                  base_outputs = 128,  # n_outputs of first fire module
+                  incr_outputs = 128,  # step by which to increase output depth every freq units
+                  freq = 2,  # frequency at which num of outputs is increased by incr_outputs
+                  squeeze_ratio = 0.25,  # percentage of squeeze kernels in all kernels (squeeze and expand)
+                  p_3x3 = 0.5,  # percentage of 3x3 kernels in expand kernels
+                  skip_identity = True,  # true if residual identity connections should be added
+                  batch_norm = False,  # if True, batch normalization is added
+                  is_training = None,  # pass variable indicating if network is training if using batch_norm
+                  conv_keepprob = None  # conv keep probability for dropout
+                  ):
 
         segment_tails = []
         node = root_output_node
@@ -219,50 +220,55 @@ class SqueezeNetBuilder(GraphBuilder):
         pool_outputs = False
         pooled_last_outputs = False
 
-        for i_module in range(n_modules):
+        for i_module in range(2, n_modules):
             if i_module % freq == 0 and i_module > 0:
                 n_module_outputs += incr_outputs
             pooled_last_outputs = pool_outputs
             pool_outputs = (i_module in pooled_firemodules)
+            with tf.name_scope("TrunkSegment"):
+                node = self.add_fire_module(node,
+                                            n_module_outputs,
+                                            squeeze_ratio = squeeze_ratio,
+                                            p_3x3 = p_3x3,
+                                            skip_identity = skip_identity,
+                                            residual_input = None,
+                                            batch_norm = batch_norm,
+                                            is_training = is_training,
+                                            conv_keepprob = conv_keepprob,
+                                            activate_input = not pooled_last_outputs,
+                                            activate_output = pool_outputs)
 
-            node = self.add_fire_module(node,
-                                        n_module_outputs,
-                                        squeeze_ratio = squeeze_ratio,
-                                        p_3x3 = p_3x3,
-                                        skip_identity = skip_identity,
-                                        residual_input = None,
-                                        batch_norm = batch_norm,
-                                        is_training = is_training,
-                                        conv_keepprob = conv_keepprob,
-                                        activate_input = not pooled_last_outputs,
-                                        activate_output = pool_outputs)
-
-            if pool_outputs:
-                node = self.add_maxpooling_layer(node)
-                segment_tails.append(node)
+                if pool_outputs:
+                    node = self.add_maxpooling_layer(node)
+                    segment_tails.append(node)
+                elif i_module == n_modules - 1:
+                    segment_tails.append(node)
 
         return segment_tails
 
-    def build_classifier_head(self,
-                              trunk_output_node, # output from the trunk
-                              n_outputs,  # number of outputs
-                              fc_keepprob=None,  # fc keep probability for dropout
-                              ):
-        node = self.add_fc_avgpooling_layer(trunk_output_node)
+    def add_classifier_head(self,
+                            trunk_output_node,  # output from the trunk
+                            n_outputs,  # number of outputs
+                            fc_keepprob=None,  # fc keep probability for dropout
+                            batch_norm=False,
+                            is_training=None
+                            ):
 
-        if fc_keepprob != None:
-            node = self.add_dropout_layer(node, fc_keepprob)
-        return self.add_fc_layer(node, n_outputs, fully_conv=True)
+        with tf.name_scope("ClassifierSegment"):
+            if fc_keepprob != None:
+                node = self.add_dropout_layer(trunk_output_node, fc_keepprob)
+            node = self.add_conv_layer(node, n_outputs, kernel_size=1, batch_norm=batch_norm, is_training=is_training)
+            return self.add_fc_avgpooling_layer(node)
 
-    def build_upsampling_pyramid(self,
-                                 segment_tails,  # tails of the trunk segments outputs
+    def add_upsampling_pyramid(self,
+                               segment_tails,  # tails of the trunk segments outputs
                                  squeeze_ratio=.125,
-                                 p_3x3=0.5,
-                                 conv_keepprob=None,
-                                 batch_norm=False,
-                                 is_training=None,
-                                 skip_identity=True
-                                 ):
+                               p_3x3=0.5,
+                               conv_keepprob=None,
+                               batch_norm=False,
+                               is_training=None,
+                               skip_identity=True
+                               ):
         node = None
 
         feature_maps = []

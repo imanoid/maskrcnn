@@ -12,7 +12,7 @@ import numpy as np
 import graph_builder
 
 def analyze_images():
-    voc_path = "/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012"
+    voc_path = "/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012"
     img_dir = os.path.join(voc_path, 'JPEGImages')
     ann_dir = os.path.join(voc_path, 'Annotations')
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
@@ -30,7 +30,7 @@ def train_squeezenet_classifier():
     input_resolution = (256, 256)
 
     # traindata path
-    tensorboard_dir = "/media/imanoid/DATA/workspace/data/tensorboard/squeezenet"
+    tensorboard_dir = "/media/imanoid/Data/workspace/data/tensorboard/squeezenet"
     train_dir = os.path.join(tensorboard_dir, "train")
     test_dir = os.path.join(tensorboard_dir, "test")
     checkpoints_dir = os.path.join(tensorboard_dir, "checkpoints")
@@ -38,7 +38,7 @@ def train_squeezenet_classifier():
     state_path = os.path.join(tensorboard_dir, "state.pickle")
 
     # samples path
-    voc_path = "/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012"
+    voc_path = "/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012"
     img_dir = os.path.join(voc_path, 'JPEGImages')
     ann_dir = os.path.join(voc_path, 'Annotations')
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
@@ -63,9 +63,9 @@ def train_squeezenet_classifier():
         conv_keepprob = tf.placeholder(builder.dtype)
         fc_keepprob = tf.placeholder(builder.dtype)
 
-        root_output = builder.build_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm, is_training=is_training)
-        segment_tails = builder.build_trunk(root_output, 16, [2, 6, 12, 15], conv_keepprob=conv_keepprob, batch_norm=batch_norm, is_training=is_training)
-        outputs = builder.build_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob)
+        root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm, is_training=is_training)
+        segment_tails = builder.add_trunk(root_output, 14, [4, 8, 11], conv_keepprob=conv_keepprob, batch_norm=batch_norm, is_training=is_training)
+        outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob, batch_norm=batch_norm, is_training=is_training)
 
         logits = tf.reshape(outputs, [-1, n_outputs])
 
