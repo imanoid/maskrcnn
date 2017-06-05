@@ -18,7 +18,7 @@ def analyze_images():
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
     pickle_dir = os.path.join(voc_path, 'Pickle')
 
-    input_resolution = (256, 256)
+    input_resolution = (192, 192)
 
     loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution)
 
@@ -27,7 +27,7 @@ def analyze_images():
 def train_squeezenet_classifier():
     builder = graph_builder.SqueezeNetBuilder()
     n_outputs = 19
-    input_resolution = (256, 256)
+    input_resolution = (192, 192)
 
     # traindata path
     tensorboard_dir = "/media/imanoid/Data/workspace/data/tensorboard/squeezenet"
@@ -64,7 +64,7 @@ def train_squeezenet_classifier():
         fc_keepprob = tf.placeholder(builder.dtype)
 
         root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm, is_training=is_training)
-        segment_tails = builder.add_trunk(root_output, 14, [4, 8, 11], conv_keepprob=conv_keepprob, batch_norm=batch_norm, is_training=is_training)
+        segment_tails = builder.add_trunk(root_output, 14, [4, 8, 11], conv_keepprob=conv_keepprob, batch_norm=batch_norm, is_training=is_training, base_outputs=256, squeeze_ratio=0.125)
         outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob, batch_norm=batch_norm, is_training=is_training)
 
         logits = tf.reshape(outputs, [-1, n_outputs])
