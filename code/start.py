@@ -1,18 +1,14 @@
 import tensorflow as tf
-
-from tensorflow.contrib.slim.nets import resnet_v2
-
 import data
-import training
 import os
 import cPickle
-import util
-import shutil
 import numpy as np
 import graph_builder
+import sys
+
 
 def analyze_images():
-    voc_path = "/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012"
+    voc_path = "/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012"
     img_dir = os.path.join(voc_path, 'JPEGImages')
     ann_dir = os.path.join(voc_path, 'Annotations')
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
@@ -22,29 +18,35 @@ def analyze_images():
 
     loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution)
 
-    loader.show_image_per_label()
+    loader.show_images_of_label("person")
+
 
 def train_squeezenet_classifier():
     builder = graph_builder.SqueezeNetBuilder()
-    n_outputs = 19
+    n_outputs = 2
     input_resolution = (192, 192)
 
     # traindata path
-    tensorboard_dir = "/media/imanoid/Data/workspace/data/tensorboard/squeezenet"
+    tensorboard_dir = "/media/imanoid/DATA/workspace/data/tensorboard/squeezenet"
     train_dir = os.path.join(tensorboard_dir, "train")
-    test_dir = os.path.join(tensorboard_dir, "test")
-    checkpoints_dir = os.path.join(tensorboard_dir, "checkpoints")
-    checkpoint_path = os.path.join(checkpoints_dir, "squeezenet.cp")
+    valid_dir = os.path.join(tensorboard_dir, "valid")
+
+    latest_checkpoints_dir = os.path.join(tensorboard_dir, "latest_checkpoints")
+    latest_checkpoint_path = os.path.join(latest_checkpoints_dir, "squeezenet.cp")
+
+    best_checkpoints_dir = os.path.join(tensorboard_dir, "best_checkpoints")
+    best_checkpoint_path = os.path.join(best_checkpoints_dir, "squeezenet.cp")
+
     state_path = os.path.join(tensorboard_dir, "state.pickle")
 
     # samples path
-    voc_path = "/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012"
+    voc_path = "/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012"
     img_dir = os.path.join(voc_path, 'JPEGImages')
     ann_dir = os.path.join(voc_path, 'Annotations')
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
     pickle_dir = os.path.join(voc_path, 'Pickle')
 
-    loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution)
+    loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution, single_label="person")
     labels = np.array(loader.get_labels())
     loader.initialize(reset=False)
     test_dataset, test_labels = loader.load_testset()
@@ -63,9 +65,13 @@ def train_squeezenet_classifier():
         conv_keepprob = tf.placeholder(builder.dtype)
         fc_keepprob = tf.placeholder(builder.dtype)
 
-        root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm, is_training=is_training)
-        segment_tails = builder.add_trunk(root_output, 14, [4, 8, 11], conv_keepprob=conv_keepprob, batch_norm=batch_norm, is_training=is_training, base_outputs=256, squeeze_ratio=0.125)
-        outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob, batch_norm=batch_norm, is_training=is_training)
+        root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm,
+                                       is_training=is_training)
+        segment_tails = builder.add_trunk(root_output, 10, [4, 8], conv_keepprob=conv_keepprob,
+                                          batch_norm=batch_norm, is_training=is_training,
+                                          squeeze_ratio=0.125)
+        outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob,
+                                              batch_norm=batch_norm, is_training=is_training)
 
         logits = tf.reshape(outputs, [-1, n_outputs])
 
@@ -87,7 +93,8 @@ def train_squeezenet_classifier():
         init = tf.global_variables_initializer()
 
         # Prepare to save checkpoints
-        checkpoint_saver = tf.train.Saver()
+        latest_checkpoint_saver = tf.train.Saver()
+        best_checkpoint_saver = tf.train.Saver()
 
         # summaries
 
@@ -95,21 +102,26 @@ def train_squeezenet_classifier():
         if not os.path.isdir(train_dir):
             os.makedirs(train_dir)
 
-        if not os.path.isdir(test_dir):
-            os.makedirs(test_dir)
+        if not os.path.isdir(valid_dir):
+            os.makedirs(valid_dir)
 
-        if not os.path.isdir(checkpoints_dir):
-            os.makedirs(checkpoints_dir)
+        if not os.path.isdir(latest_checkpoints_dir):
+            os.makedirs(latest_checkpoints_dir)
+
+        if not os.path.isdir(best_checkpoints_dir):
+            os.makedirs(best_checkpoints_dir)
 
         # summary writers
         train_writer = tf.summary.FileWriter(train_dir, graph=tf.get_default_graph())
-        test_writer = tf.summary.FileWriter(test_dir, graph=tf.get_default_graph())
+        valid_writer = tf.summary.FileWriter(valid_dir, graph=tf.get_default_graph())
 
         summary_op = tf.summary.merge_all()
 
         max_epochs = 100000
         batch_size = 10
         report_epochs = 25
+
+        best_valid_loss = sys.float_info.max
 
         with tf.Session() as sess:
             step = 1
@@ -118,23 +130,20 @@ def train_squeezenet_classifier():
                 state = cPickle.load(open(state_path, "rb"))
                 step = state["step"]
 
-            if os.path.exists(os.path.join(checkpoints_dir, "checkpoint")):
-                checkpoint_saver.restore(sess, tf.train.latest_checkpoint(checkpoints_dir))
+            if os.path.exists(os.path.join(latest_checkpoints_dir, "checkpoint")):
+                latest_checkpoint_saver.restore(sess, tf.train.latest_checkpoint(latest_checkpoints_dir))
             else:
                 sess.run(init)
 
             while step < max_epochs:
                 batch_samples, batch_labels = loader.load_trainset_random_minibatch(batch_size)
-                train_loss, train_acc, _, train_summary, train_logits, train_gt = sess.run([loss, accuracy, optimiser, summary_op, logits, correct_pred],
-                                                      feed_dict={inputs: batch_samples,
-                                                                 true_outputs: batch_labels,
-                                                                 is_training: True,
-                                                                 input_keepprob: .95,
-                                                                 conv_keepprob: .9,
-                                                                 fc_keepprob: .6})
-
-
-
+                train_loss, train_acc, _, train_summary = sess.run([loss, accuracy, optimiser, summary_op],
+                                                                   feed_dict={inputs: batch_samples,
+                                                                              true_outputs: batch_labels,
+                                                                              is_training: True,
+                                                                              input_keepprob: .95,
+                                                                              conv_keepprob: .9,
+                                                                              fc_keepprob: .6})
                 train_writer.add_summary(train_summary, step)
                 train_writer.flush()
 
@@ -144,49 +153,54 @@ def train_squeezenet_classifier():
                 cPickle.dump(state, open(state_path, "wb"))
 
                 if step % report_epochs == 0:
-                    test_loss, test_acc, test_summary, test_logits, test_gt = sess.run([loss, accuracy, summary_op, logits, correct_pred],
-                                                   feed_dict={inputs: test_dataset,
-                                                              true_outputs: test_labels,
-                                                              is_training: False,
-                                                              input_keepprob: 1,
-                                                              conv_keepprob: 1,
-                                                              fc_keepprob: 1})
+                    valid_loss, valid_acc, valid_summary, valid_logits, valid_labels = sess.run([loss, accuracy, summary_op, logits, true_outputs],
+                                                                    feed_dict={inputs: valid_dataset,
+                                                                               true_outputs: valid_labels,
+                                                                               is_training: False,
+                                                                               input_keepprob: 1,
+                                                                               conv_keepprob: 1,
+                                                                               fc_keepprob: 1})
 
                     print("Epoch " + str(step))
                     print("Training Loss={:.6f}".format(train_loss))
                     print("Training Accuracy={:.6f}".format(train_acc))
-                    # pred_labels = labels[np.argmax(train_logits, 1)]
-                    # true_labels = labels[np.argmax(batch_labels, 1)]
+                    # pred_labels = np.argmax(train_logits, 1)
+                    # true_labels = np.argmax(batch_labels, 1)
                     # for i in range(l en(pred_labels)):
                     #     print("%s==%s" % (pred_labels[i], true_labels[i]))
                     # print
 
-                    print("Test Loss={:.6f}".format(test_loss))
-                    print("Test Accuracy={:.6f}".format(test_acc))
-                    # pred_labels = labels[np.argmax(test_logits, 1)]
-                    # true_labels = labels[np.argmax(test_labels, 1)]
-                    # for i in range(len(pred_labels)):
-                    #     print("%s==%s" % (pred_labels[i], true_labels[i]))
-                    # print
+                    print("Valid Loss={:.6f}".format(valid_loss))
+                    print("Valid Accuracy={:.6f}".format(valid_acc))
+                    pred_labels = np.argmax(valid_logits, 1)
+                    true_labels = np.argmax(valid_labels, 1)
+                    for i in range(len(pred_labels)):
+                        print("%s==%s" % (pred_labels[i], true_labels[i]))
+                    print
 
-                    test_writer.add_summary(test_summary, step)
-                    test_writer.flush()
+                    valid_writer.add_summary(valid_summary, step)
+                    valid_writer.flush()
 
-                    checkpoint_saver.save(sess, checkpoint_path)
+                    latest_checkpoint_saver.save(sess, latest_checkpoint_path)
+
+                    if valid_loss > best_valid_loss:
+                        best_valid_loss = valid_loss
+                        best_checkpoint_saver.save(sess, best_checkpoint_path)
 
                 step += 1
 
             print ("Training finished!")
             test_loss, test_acc = sess.run([loss, accuracy],
-                                           feed_dict={inputs: valid_dataset,
-                                                      true_outputs: valid_labels,
+                                           feed_dict={inputs: test_dataset,
+                                                      true_outputs: test_labels,
                                                       is_training: False,
                                                       input_keepprob: 1,
                                                       conv_keepprob: 1,
                                                       fc_keepprob: 1})
 
-            print("Validation Loss=" + "{:.6f}".format(test_loss))
-            print("Validation Accuracy=" + "{:.6f}".format(test_acc))
+            print("Testation Loss=" + "{:.6f}".format(test_loss))
+            print("Testation Accuracy=" + "{:.6f}".format(test_acc))
+
 
 if __name__ == "__main__":
     train_squeezenet_classifier()

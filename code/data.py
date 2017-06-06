@@ -33,7 +33,18 @@ class DataLoader(object):
         pass
 
 class PascalVocLoader(object):
-    def __init__(self, set_dir, ann_dir, img_dir, pickle_dir, test_per_label=2, valid_per_label=2, minibatch_size=25, image_resolution=(300, 300), pixel_depth=255.0, color_depth=3):
+    def __init__(self,
+                 set_dir,
+                 ann_dir,
+                 img_dir,
+                 pickle_dir,
+                 test_per_label=5,
+                 valid_per_label=5,
+                 minibatch_size=25,
+                 image_resolution=(300, 300),
+                 pixel_depth=255.0,
+                 color_depth=3,
+                 single_label="person"):
         self.set_dir = set_dir
         self.ann_dir = ann_dir
         self.img_dir = img_dir
@@ -47,6 +58,8 @@ class PascalVocLoader(object):
         self.image_shape = image_resolution
         self.pixel_depth = pixel_depth
         self.color_depth = color_depth
+
+        self.single_label = single_label
 
         self.test_dataset = None
         self.valid_dataset = None
@@ -71,6 +84,20 @@ class PascalVocLoader(object):
             plt.imshow(img)
             plt.show()
         print("total: %d" % total_images)
+
+    def show_images_of_label(self, label):
+        labels = self.get_labels()
+
+        total_images = 0
+        # get all image file names from this label
+        label_files = self._list_files_from_label(label, "trainval")
+        random.shuffle(label_files)
+        for label_file in label_files:
+            total_images += len(label_files)
+
+            img = self._load_image(label_file)
+            plt.imshow(img)
+            plt.show()
 
     def get_labels(self):
         all_files = os.listdir(self.set_dir)
@@ -112,24 +139,74 @@ class PascalVocLoader(object):
             valid_labels = []
             train_labels = []
 
-            i_label = 0
-            for label in labels:
+            if self.single_label is None:
+                i_label = 0
+                for label in labels:
+                    # get all image file names from this label
+                    label_files = self._list_files_from_label(label, "trainval")
+                    random.shuffle(label_files)
+
+                    # split images into test, valid and train dataset
+                    test_files += label_files[0:self.test_per_label]
+                    valid_files += label_files[self.test_per_label:self.test_per_label+self.valid_per_label]
+                    train_files += label_files[self.test_per_label+self.valid_per_label:]
+
+                    # assign correct labels
+                    test_labels += [i_label for i in range(self.test_per_label)]
+                    valid_labels += [i_label for i in range(self.valid_per_label)]
+                    train_labels += [i_label for i in range(len(label_files) - self.test_per_label - self.valid_per_label)]
+
+
+                    i_label += 1
+            else:
                 # get all image file names from this label
-                label_files = self._list_files_from_label(label, "trainval")
-                random.shuffle(label_files)
+                positive_files = self._list_files_from_label(self.single_label, "trainval")
+                random.shuffle(positive_files)
+
+                negative_files = []
+                for label in labels:
+                    if label != self.single_label:
+                        # get all image file names from this label
+                        label_files = self._list_files_from_label(label, "trainval")
+
+                        for label_file in label_files:
+                            if label_file not in positive_files:
+                                negative_files.append(label_file)
+
+                while len(positive_files) < len(negative_files):
+                    num_pos = len(positive_files)
+                    num_neg = len(negative_files)
+
+                    if num_neg - num_pos >= num_pos:
+                        new_files = positive_files[:]
+                    else:
+                        new_files = positive_files[0:num_neg - num_pos]
+                    random.shuffle(new_files)
+                    positive_files += new_files
+
+                random.shuffle(positive_files)
+                random.shuffle(negative_files)
 
                 # split images into test, valid and train dataset
-                test_files += label_files[0:self.test_per_label]
-                valid_files += label_files[self.test_per_label:self.test_per_label+self.valid_per_label]
-                train_files += label_files[self.test_per_label+self.valid_per_label:]
+                test_files += positive_files[0:self.test_per_label]
+                valid_files += positive_files[self.test_per_label:self.test_per_label + self.valid_per_label]
+                train_files += positive_files[self.test_per_label + self.valid_per_label:]
 
                 # assign correct labels
-                test_labels += [i_label for i in range(self.test_per_label)]
-                valid_labels += [i_label for i in range(self.valid_per_label)]
-                train_labels += [i_label for i in range(len(label_files) - self.test_per_label - self.valid_per_label)]
+                test_labels += [1 for i in range(self.test_per_label)]
+                valid_labels += [1 for i in range(self.valid_per_label)]
+                train_labels += [1 for i in range(len(positive_files) - self.test_per_label - self.valid_per_label)]
 
+                test_files += negative_files[0:self.test_per_label]
+                valid_files += negative_files[self.test_per_label:self.test_per_label + self.valid_per_label]
+                train_files += negative_files[self.test_per_label + self.valid_per_label:]
 
-                i_label += 1
+                # assign correct labels
+                test_labels += [0 for i in range(self.test_per_label)]
+                valid_labels += [0 for i in range(self.valid_per_label)]
+                train_labels += [0 for i in range(len(negative_files) - self.test_per_label - self.valid_per_label)]
+
+                num_labels = 2
 
             self.test_dataset = self._load_images(test_files)
             self.valid_dataset = self._load_images(valid_files)
