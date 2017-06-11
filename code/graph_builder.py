@@ -197,7 +197,7 @@ class SqueezeNetBuilder(GraphBuilder):
 
     def add_root(self,
                  input_node,  # input graph node
-                 first_conv_ksize=7,  # kernel size of first convolution
+                 first_conv_ksize=3,  # kernel size of first convolution
                  first_conv_stride=2,  # stride of first convolution
                  first_conv_kernels=96,  # number of kernels in first convolution layer
                  input_keepprob=None,  # input keep probability for dropout

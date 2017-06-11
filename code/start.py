@@ -16,7 +16,7 @@ def analyze_images():
 
     input_resolution = (192, 192)
 
-    loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution)
+    loader = data.PascalVocClassificationLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution)
 
     loader.show_images_of_label("person")
 
@@ -46,7 +46,7 @@ def train_squeezenet_classifier():
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
     pickle_dir = os.path.join(voc_path, 'Pickle')
 
-    loader = data.PascalVocLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution, single_label="person")
+    loader = data.PascalVocClassificationLoader(set_dir, ann_dir, img_dir, pickle_dir, image_resolution=input_resolution, single_label="person", valid_per_label=20, test_per_label=20)
     labels = np.array(loader.get_labels())
     loader.initialize(reset=False)
     test_dataset, test_labels = loader.load_testset()
@@ -67,7 +67,7 @@ def train_squeezenet_classifier():
 
         root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm,
                                        is_training=is_training)
-        segment_tails = builder.add_trunk(root_output, 10, [4, 8], conv_keepprob=conv_keepprob,
+        segment_tails = builder.add_trunk(root_output, 10, [3, 5], conv_keepprob=conv_keepprob,
                                           batch_norm=batch_norm, is_training=is_training,
                                           squeeze_ratio=0.125)
         outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob,
@@ -172,11 +172,11 @@ def train_squeezenet_classifier():
 
                     print("Valid Loss={:.6f}".format(valid_loss))
                     print("Valid Accuracy={:.6f}".format(valid_acc))
-                    pred_labels = np.argmax(valid_logits, 1)
-                    true_labels = np.argmax(valid_labels, 1)
-                    for i in range(len(pred_labels)):
-                        print("%s==%s" % (pred_labels[i], true_labels[i]))
-                    print
+                    # pred_labels = np.argmax(valid_logits, 1)
+                    # true_labels = np.argmax(valid_labels, 1)
+                    # for i in range(len(pred_labels)):
+                    #     print("%s==%s" % (pred_labels[i], true_labels[i]))
+                    # print
 
                     valid_writer.add_summary(valid_summary, step)
                     valid_writer.flush()
