@@ -1,22 +1,6 @@
 import abc
 
 class DataLoader(object):
-    def __init__(self,
-                 n_test_samples,
-                 n_valid_samples,
-                 labels=None,
-                 classification=False,
-                 detection=False,
-                 instance_segmentation=False,
-                 class_segmentation=False):
-        self.n_test_samples = n_test_samples
-        self.n_valid_samples = n_valid_samples
-        self.labels = labels
-        self.classification = classification
-        self.detection = detection
-        self.instance_segmentation = instance_segmentation
-        self.class_segmentation = class_segmentation
-
     @abc.abstractmethod
     def initialize(self, reset=False):
         pass
@@ -36,3 +20,15 @@ class DataLoader(object):
     @abc.abstractmethod
     def load_trainset_random_minibatch(self, batch_size):
         pass
+
+
+class BoundedObject(object):
+    def __init__(self,
+                 label,
+                 bounding_box,
+                 is_truncated,
+                 is_difficult):
+        self.label = label
+        self.bounding_box = bounding_box
+        self.is_truncated = is_truncated
+        self.is_difficult = is_difficult

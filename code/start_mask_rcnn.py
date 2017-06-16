@@ -1,4 +1,4 @@
-from data.pascal_voc import PascalVocSegmentationLoader
+from data import pascal, visualization
 import os
 
 if __name__ == "__main__":
@@ -9,11 +9,15 @@ if __name__ == "__main__":
     set_dir = os.path.join(voc_path, 'ImageSets', 'Main')
     pickle_dir = os.path.join(voc_path, 'Pickle')
 
-    loader = PascalVocSegmentationLoader(set_dir,
-                                         ann_dir,
-                                         img_dir,
-                                         pickle_dir,
-                                         image_resolution=input_resolution,
-                                         n_valid_samples=20,
-                                         n_test_samples=20)
-    loader.initialize()
+    loader = pascal.PascalVocDataLoader("DetectionAndClassification",
+                 voc_path,
+                 40,
+                 40,
+                 detection=True,
+                 image_shape=(192, 192, 3))
+    image_files, bboxes = loader.initialize()
+    images = loader._load_images_from_files(image_files)
+
+    visualizer = visualization.Visualizer(loader.load_labels())
+    for i in range(len(images)):
+        visualizer.show_objects(images[i], bboxes[i])
