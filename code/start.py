@@ -1,10 +1,12 @@
-import tensorflow as tf
-import data
 import os
+import sys
+
 import cPickle
 import numpy as np
-import graph_builder
-import sys
+import tensorflow as tf
+
+import data
+from builder import squeezenet
 
 
 def analyze_images():
@@ -22,7 +24,7 @@ def analyze_images():
 
 
 def train_squeezenet_classifier():
-    builder = graph_builder.SqueezeNetBuilder()
+    builder = squeezenet.SqueezeNetBuilder()
     n_outputs = 2
     input_resolution = (192, 192)
 
