@@ -2,10 +2,14 @@ import numpy as np
 import typing
 
 
+max_false_iou = 0.3
+min_true_iou = 0.7
+
+
 def encode_rcnn_roi_mask(input_shape: typing.Tuple[int, int],
                          object_bboxes: typing.List[typing.Tuple[float, float, float, float]],
                          output_shape: typing.Tuple[int, int],
-                         anchors: typing.List[typing.Tuple[float, float]]) -> np.ndarray:
+                         anchors: typing.List[typing.Tuple[float, float]]) -> typing.Tuple[np.ndarray, np.ndarray]:
     """
     For each position and each anchor, we assign a positive label if: the anchor has highest IoU with a gt box or anchor has IoU > 0.7 with any gt box
                                                  a negative label if: the anchor has IoU < 0.3 for all gt boxes
@@ -18,19 +22,44 @@ def encode_rcnn_roi_mask(input_shape: typing.Tuple[int, int],
     :param anchors: list of tuples containing (width, height)
     :return: ground truth output (width, height, (4+2) * len(anchors)), loss contribution mask (width, height)
     """
-    output_depth = (4+2) * len(anchors)  # for each anchor: bbox (4) + objectness (2)
+    n_anchors = len(anchors)
 
-    output = np.array([output_shape[0], output_shape[1], output_depth])
-    loss_mask = np.array([output_shape[0], output_shape[1], len(anchors)])
+    output = np.zeros([output_shape[0], output_shape[1], 6 * n_anchors])  # for each anchor: bbox (4) + objectness (2)
+    loss_mask = np.zeros([output_shape[0], output_shape[1], n_anchors], np.bool)
 
     for object_bbox in object_bboxes:
         for i_anchor, anchor in enumerate(anchors):
+            iou_pos = i_anchor * 6
+            target_start = iou_pos + 2
+            target_end = iou_pos + 6
             for x_input_pos in range(input_shape[0]):
                 for y_input_pos in range(input_shape[1]):
                     center = (x_input_pos, y_input_pos)
                     anchor_bbox = get_anchor_bbox(anchor, center)
                     iou = intersection_over_union(anchor_bbox, object_bbox)
-    return output
+                    if output[x_input_pos, y_input_pos, iou_pos] < iou:
+                        output[x_input_pos, y_input_pos, iou_pos] = iou
+                        target_bbox = encode_rcnn_bbox(anchor_bbox, object_bbox)
+                        output[x_input_pos, y_input_pos, target_start:target_end] = target_bbox
+
+    for i_anchor in range(n_anchors):
+        for x_input_pos in range(input_shape[0]):
+            for y_input_pos in range(input_shape[1]):
+                output_start = i_anchor * 6
+
+                if output[x_input_pos, y_input_pos, i_anchor * 6] < min_true_iou:
+                    # false sample
+                    output[x_input_pos, y_input_pos, output_start: output_start + 2] = (0, 1)
+                    loss_mask[x_input_pos, y_input_pos, i_anchor] = True
+                elif output[x_input_pos, y_input_pos, i_anchor * 6] > max_false_iou:
+                    # true sample
+                    loss_mask[x_input_pos, y_input_pos, i_anchor] = True
+                    output[x_input_pos, y_input_pos, output_start: output_start + 2] = (1, 0)
+                else:
+                    # ignore sample
+                    loss_mask[x_input_pos, y_input_pos, i_anchor] = False
+
+    return output, loss_mask
 
 
 def get_anchor_bbox(anchor: typing.Tuple[float, float],
