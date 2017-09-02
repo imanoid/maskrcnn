@@ -24,7 +24,7 @@ def encode_rcnn_roi_mask(input_shape: typing.Tuple[int, int],
     """
     n_anchors = len(anchors)
 
-    output = np.zeros([output_shape[0], output_shape[1], 6 * n_anchors])  # for each anchor: bbox (4) + objectness (2)
+    output = np.zeros([output_shape[0], output_shape[1], 6 * n_anchors])  # for each anchor: objectness (2) + bbox (4)
     loss_mask = np.zeros([output_shape[0], output_shape[1], n_anchors], np.bool)
 
     for object_bbox in object_bboxes:

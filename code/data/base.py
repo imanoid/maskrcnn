@@ -1,4 +1,6 @@
 import abc
+import typing
+
 
 class DataLoader(object):
     @abc.abstractmethod
@@ -6,7 +8,8 @@ class DataLoader(object):
         pass
 
     @abc.abstractmethod
-    def initialize_datasets(self, datasets):
+    def initialize_datasets(self,
+                            datasets: typing.List[typing.Dict]):
         """
         :param datasets: list of dataset dicts (e.g. [{"name": "validation", "size": 25}])
         :return: None
@@ -14,7 +17,11 @@ class DataLoader(object):
         pass
 
     @abc.abstractmethod
-    def get_data(self, dataset, samples=None, shuffle=True, features=None):
+    def get_data(self,
+                 dataset: str,
+                 samples: int=None,
+                 shuffle: bool=True,
+                 features: typing.List=None) -> typing.List[typing.Dict]:
         """
         :param dataset: name of dataset
         :param samples: number of samples, None if all
@@ -27,11 +34,12 @@ class DataLoader(object):
 
 class ObjectInstance(object):
     def __init__(self,
-                 label,
-                 bounding_box=None,
+                 label: str,
+                 bounding_box: typing.Tuple[float, float, float, float]=None,
                  mask=None,
-                 is_truncated=False,
-                 is_difficult=False):
+                 is_truncated: bool=False,
+                 is_difficult: bool=False,
+                 objectness: float=1):
         self.label = label
         self.bounding_box = bounding_box
         self.mask = mask

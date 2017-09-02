@@ -1,3 +1,4 @@
+import typing
 import os
 import data.base as base
 import pandas as pd
@@ -53,16 +54,16 @@ class PascalVocDataLoader(base.DataLoader):
                 self._save_sample(sample, label_sample)
 
     # samples
-    def _load_sample(self, sample_name):
+    def _load_sample(self, sample_name: typing.AnyStr) -> typing.Dict:
         with open(os.path.join(self.pickle_dir, "{}.json".format(sample_name)), "rb") as f:
             return pickle.load(f)
 
-    def _save_sample(self, sample, sample_name):
+    def _save_sample(self, sample: typing.Dict, sample_name: typing.AnyStr):
         with open(os.path.join(self.pickle_dir, "{}.json".format(sample_name)), "wb") as f:
             pickle.dump(sample, f)
 
     # images
-    def _load_image_from_sample(self, sample_name):
+    def _load_image_from_sample(self, sample_name: typing.AnyStr) -> np.ndarray:
         image_data = (ndimage.imread(os.path.join(self.images_dir, sample_name + ".jpg")).astype(np.float32) -
                       self.image_shape[2] / 2) / self.image_shape[2]
 
@@ -72,7 +73,7 @@ class PascalVocDataLoader(base.DataLoader):
         return image_data
 
     # objects
-    def _load_objects_from_sample(self, sample_name):
+    def _load_objects_from_sample(self, sample_name: typing.AnyStr) -> typing.List[base.ObjectInstance]:
         ann = self._load_annotations_from_file(sample_name)
         size = ann.find("size")
         width = int(size.find("width").text)
