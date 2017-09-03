@@ -67,10 +67,13 @@ def train_squeezenet_classifier():
         conv_keepprob = tf.placeholder(builder.dtype)
         fc_keepprob = tf.placeholder(builder.dtype)
 
-        root_output = builder.add_root(inputs, input_keepprob=input_keepprob, batch_norm=batch_norm,
-                                       is_training=is_training)
-        segment_tails = builder.add_trunk(root_output, 10, [3, 5], conv_keepprob=conv_keepprob,
-                                          batch_norm=batch_norm, is_training=is_training,
+        segment_tails = builder.add_trunk(inputs,
+                                          10,
+                                          [3, 5],
+                                          input_keepprob=input_keepprob,
+                                          conv_keepprob=conv_keepprob,
+                                          batch_norm=batch_norm,
+                                          is_training=is_training,
                                           squeeze_ratio=0.125)
         outputs = builder.add_classifier_head(segment_tails[-1], n_outputs, fc_keepprob=fc_keepprob,
                                               batch_norm=batch_norm, is_training=is_training)

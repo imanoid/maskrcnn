@@ -4,6 +4,7 @@ import numpy as np
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import gen_nn_ops
 
+
 # 'backport' from current tensorflow version to support gradient descent with MaxPoolWithArgmax
 @ops.RegisterGradient("MaxPoolWithArgmax")
 def _MaxPoolWithArgmaxGrad(op, grad, unused_argmax_grad):
@@ -19,8 +20,15 @@ class GraphBuilder(object):
     def __init__(self, dtype=tf.float32):
         self.dtype = dtype
 
-    def _add_conv_layer(self, node, function, n_outputs, kernel_size, strides, activation, batch_norm, split,
-                        is_training):
+    def _add_conv_layer(self,
+                        node,
+                        function,
+                        n_outputs,
+                        kernel_size,
+                        strides,
+                        activation,
+                        batch_norm, split,
+                        is_training, bias):
         with tf.name_scope("Convolution_%dx%d" % (kernel_size, kernel_size)):
             if split:
                 stddev = 2.0 / np.sqrt(kernel_size * int(node.shape[3]))
@@ -43,7 +51,7 @@ class GraphBuilder(object):
                 node = function(node, kernel, strides=[1, strides, strides, 1], padding="SAME")
             if batch_norm:
                 node = self.add_batch_norm(node, is_training, True)
-            else:
+            elif bias:
                 bias = tf.Variable(tf.random_normal([n_outputs], dtype=self.dtype))
                 node = tf.nn.bias_add(node, bias)
 
@@ -52,17 +60,36 @@ class GraphBuilder(object):
             else:
                 return node
 
-    def add_conv_layer(self, node, n_outputs, kernel_size=3, strides=1, activation=tf.nn.relu, batch_norm=False,
-                       split=False, is_training=None):
+    def add_conv_layer(self,
+                       node,
+                       n_outputs,
+                       kernel_size=3,
+                       strides=1,
+                       activation=tf.nn.relu,
+                       batch_norm=False,
+                       split=False, is_training=None, bias=True):
         return self._add_conv_layer(node, tf.nn.conv2d, n_outputs, kernel_size, strides, activation, batch_norm, split,
-                                    is_training)
+                                    is_training, bias)
 
-    def add_deconv_layer(self, node, n_outputs, kernel_size=3, strides=1, activation=tf.nn.relu, batch_norm=False,
-                         split=False, is_training=None):
+    def add_deconv_layer(self,
+                         node,
+                         n_outputs,
+                         kernel_size=3,
+                         strides=1,
+                         activation=tf.nn.relu,
+                         batch_norm=False,
+                         split=False, is_training=None, bias=True):
         return self._add_conv_layer(node, tf.nn.conv2d_transpose, n_outputs, kernel_size, strides, activation,
-                                    batch_norm, split, is_training)
+                                    batch_norm, split, is_training, bias)
 
-    def add_fc_layer(self, node, n_outputs, activation=None, batch_norm=False, fully_conv=True, is_training=None):
+    def add_fc_layer(self,
+                     node,
+                     n_outputs,
+                     activation=None,
+                     batch_norm=False,
+                     fully_conv=True,
+                     is_training=None,
+                     bias=True):
         with tf.name_scope("FullyConnected"):
             if fully_conv:
                 # conv
@@ -81,7 +108,7 @@ class GraphBuilder(object):
 
             if batch_norm:
                 node = self.add_batch_norm(node, is_training, True)
-            else:
+            elif bias:
                 bias = tf.Variable(tf.random_normal([n_outputs], dtype=self.dtype))
                 node = tf.nn.bias_add(node, bias)
 

@@ -8,7 +8,7 @@ class SqueezeNetBuilder(base.GraphBuilder):
 
     def add_trunk(self,
                   root_output_node,  # input graph node
-                  pooled_firemodules,  # modules at which to pool
+                  pooled_firemodules=[2, 5],  # modules at which to pool
                   first_conv_ksize=3,  # kernel size of first convolution
                   first_conv_stride=2,  # stride of first convolution
                   first_conv_kernels=96,  # number of kernels in first convolution layer
@@ -22,8 +22,7 @@ class SqueezeNetBuilder(base.GraphBuilder):
                   batch_norm=False,  # if True, batch normalization is added
                   is_training=None,  # pass variable indicating if network is training if using batch_norm
                   input_keepprob=None,  # input keep probability for dropout
-                  conv_keepprob=None,  # conv keep probability for dropout
-                  n_outputs=None
+                  conv_keepprob=None  # conv keep probability for dropout
                   ):
 
         node = root_output_node
@@ -36,7 +35,8 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                        kernel_size=first_conv_ksize,
                                        strides=first_conv_stride,
                                        batch_norm=batch_norm,
-                                       is_training=is_training)
+                                       is_training=is_training,
+                                       bias=False)
         if 1 in pooled_firemodules:
             node = self.add_maxpooling_layer(node)
 
@@ -118,16 +118,48 @@ class SqueezeNetBuilder(base.GraphBuilder):
             feature_maps.append(node)
         return feature_maps
 
-    def add_pyramid_roi_heads(self,
-                              feature_maps,
-                              aspect_ratios=[0.5, 1, 2]):
-        pass
-
     def add_simple_roi_head(self,
                             tail,
-                            aspect_ratios=[0.5, 1, 2],
-                            scales=3):
-        pass
+                            n_anchors,
+                            batch_norm=False,
+                            is_training=None,
+                            conv_keepprob=None  # conv keep probability for dropout
+                            ):
+        node = tail
+        with tf.name_scope("rpn"):
+            if conv_keepprob is not None:
+                node = self.add_dropout_layer(node, conv_keepprob)
+            node = self.add_conv_layer(node,
+                                       n_anchors,
+                                       kernel_size=1,
+                                       batch_norm=batch_norm,
+                                       is_training=is_training)
+        return node
+
+    def add_simple_roi_loss(self,
+                            pred_output,
+                            gt_output,
+                            n_anchors):
+        reg_pred_channels = list()
+        reg_gt_channels = list()
+        for i_anchor in range(n_anchors):
+            bbox_start = i_anchor * 6 + 2
+            bbox_end = bbox_start + 4
+            reg_pred_channels = pred_output[:, :, :, bbox_start:bbox_end]
+            reg_gt_channels = gt_output[:, :, :, bbox_start:bbox_end]
+        reg_pred_output = tf.concat(reg_pred_channels, axis=3)
+        reg_gt_output = tf.concat(reg_gt_channels, axis=3)
+
+        diff = reg_pred_output - reg_gt_output
+        abs_diff = tf.abs(diff)
+        abs_diff_lt_1 = tf.less(abs_diff, 1)
+        anchorwise_smooth_l1norm = tf.reduce_sum(
+            tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5),
+            2)
+        if self._anchorwise_output:
+            return anchorwise_smooth_l1norm
+
+        return tf.reduce_sum(anchorwise_smooth_l1norm)
 
     def add_fire_module(self,
                         input_node,  # input graph node
@@ -138,7 +170,7 @@ class SqueezeNetBuilder(base.GraphBuilder):
                         residual_input=None,
                         batch_norm=False,  # if True, batch normalization is added
                         is_training=None,  # pass variable indicating if network is training if using batch_norm
-                        conv_keepprob=None,  # conv keep probability for dropout
+                        conv_keepprob=None  # conv keep probability for dropout
                         ):
         assert (type(n_outputs) == int)
 
@@ -163,7 +195,7 @@ class SqueezeNetBuilder(base.GraphBuilder):
                 squeeze_input_node = self.add_dropout_layer(squeeze_input_node, conv_keepprob)
 
             node = self.add_conv_layer(squeeze_input_node, s_1x1, kernel_size=1, batch_norm=batch_norm,
-                                       is_training=is_training)
+                                       is_training=is_training, bias=False)
 
             if conv_keepprob is not None:
                 node = self.add_dropout_layer(node, conv_keepprob)
