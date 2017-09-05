@@ -1,6 +1,7 @@
 import typing
 import os
 import data.base as base
+import data.coding as coding
 import pandas as pd
 import pickle
 import xml.etree.ElementTree as ET
@@ -10,9 +11,11 @@ from scipy import ndimage, misc
 
 class PascalVocDataLoader(base.DataLoader):
     def __init__(self,
-                 config_name,
-                 voc_dir,
-                 image_shape=(256, 256)):
+                 config_name: str,
+                 voc_dir: str,
+                 image_shape: typing.Tuple[int, int]=(256, 256),
+                 rpn_shape: typing.Tuple[int, int]=None,
+                 anchors: typing.List[typing.Tuple[float, float]]=None):
         self.datasets_dir = os.path.join(voc_dir, "ImageSets")
         self.classificationset_dir = os.path.join(self.datasets_dir, "Main")
         self.segmentationset_dir = os.path.join(self.datasets_dir, "Segmentation")
@@ -21,6 +24,8 @@ class PascalVocDataLoader(base.DataLoader):
         self.pickle_dir = os.path.join(voc_dir, config_name)
         os.makedirs(self.pickle_dir)
         self.image_shape = image_shape
+        self.rpn_shape = rpn_shape,
+        self.anchors = anchors
 
     def initialize_data(self):
         # init samples
@@ -29,15 +34,30 @@ class PascalVocDataLoader(base.DataLoader):
             sample_name = file_name.replace(".jpg", "")
             sample_names.append(sample_name)
 
-            #init sample
+            # init sample
             sample = dict()
 
-            #init image
+            # init image
             sample["image"] = self._load_image_from_sample(sample_name)
 
-            #init bounding boxes and masks
-            bounding_boxes = self._load_objects_from_sample(sample_name)
-                      #"objects": None,
+            # init bounding boxes and masks
+            object_instances = self._load_objects_from_sample(sample_name)
+            sample["objects"] = object_instances
+
+            # init RPN output
+            if self.rpn_shape is None:
+                print("No rpn shape specified. Not initializing rpn output!")
+            elif self.anchors is None:
+                print("No anchors specified. Not initializting rpn output!")
+            else:
+                rpn_output, rpn_loss_mask = coding.encode_rpn_output(self.image_shape,
+                                                      coding.objects_to_bboxes(object_instances),
+                                                      self.rpn_shape,
+                                                      self.anchors)
+                sample["rpn_output"] = rpn_output
+                sample["rpn_loss_mask"] = rpn_loss_mask
+
+            #"objects": None,
                       #"segmentation": None,
                       #"labels": None}
             self._save_sample(sample, sample_name)
@@ -88,17 +108,17 @@ class PascalVocDataLoader(base.DataLoader):
             truncated = bool(obj.find("truncated").text)
             difficult = bool(obj.find("difficult").text)
             bbox = obj.find("bndbox")
-            xmin = int(bbox.find("xmin").text)
             ymin = int(bbox.find("ymin").text)
-            xmax = int(bbox.find("xmax").text)
+            xmin = int(bbox.find("xmin").text)
             ymax = int(bbox.find("ymax").text)
+            xmax = int(bbox.find("xmax").text)
 
             if self.labels is None or label in self.labels:
                 object_boxes.append(base.ObjectInstance(label,
-                                                        bounding_box=(int(xmin / width * self.image_shape[0]),
-                                                                      int(ymin / height * self.image_shape[1]),
-                                                                      int(xmax / width * self.image_shape[0]),
-                                                                      int(ymax / height * self.image_shape[1])),
+                                                        bounding_box=(int(ymin / height * self.image_shape[1]),
+                                                                      int(xmin / width * self.image_shape[0]),
+                                                                      int(ymax / height * self.image_shape[1]),
+                                                                      int(xmax / width * self.image_shape[0])),
                                                         is_truncated=truncated,
                                                         is_difficult=difficult))
         return object_boxes

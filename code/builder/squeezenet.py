@@ -139,14 +139,17 @@ class SqueezeNetBuilder(base.GraphBuilder):
     def add_simple_roi_loss(self,
                             pred_output,
                             gt_output,
+                            loss_mask,
                             n_anchors):
+        mask_shape = loss_mask.shape
+        # rpn box regression loss
         reg_pred_channels = list()
         reg_gt_channels = list()
         for i_anchor in range(n_anchors):
             bbox_start = i_anchor * 6 + 2
             bbox_end = bbox_start + 4
-            reg_pred_channels = pred_output[:, :, :, bbox_start:bbox_end]
-            reg_gt_channels = gt_output[:, :, :, bbox_start:bbox_end]
+            reg_pred_channels.append(pred_output[:, :, :, bbox_start:bbox_end])
+            reg_gt_channels.append(gt_output[:, :, :, bbox_start:bbox_end])
         reg_pred_output = tf.concat(reg_pred_channels, axis=3)
         reg_gt_output = tf.concat(reg_gt_channels, axis=3)
 
@@ -154,12 +157,26 @@ class SqueezeNetBuilder(base.GraphBuilder):
         abs_diff = tf.abs(diff)
         abs_diff_lt_1 = tf.less(abs_diff, 1)
         anchorwise_smooth_l1norm = tf.reduce_sum(
-            tf.where(abs_diff_lt_1, 0.5 * tf.square(abs_diff), abs_diff - 0.5),
+            tf.where(abs_diff_lt_1,
+                     0.5 * tf.square(abs_diff),
+                     abs_diff - 0.5),
             2)
-        if self._anchorwise_output:
-            return anchorwise_smooth_l1norm
 
-        return tf.reduce_sum(anchorwise_smooth_l1norm)
+        reduce_loss = tf.reduce_sum(anchorwise_smooth_l1norm)
+
+        # rpn bos classification loss
+        for i_anchor in range(n_anchors):
+            objectness_start = i_anchor * 6
+            objectness_end = objectness_start + 2
+            cls_pred_channels = pred_output[:, :, :, objectness_start:objectness_end] * loss_mask[1, *mask_shape, 1]
+            cls_gt_channels = gt_output[:, :, :, objectness_start:objectness_end] * loss_mask[1, *mask_shape, 1]
+            cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+                labels=cls_gt_channels,
+                logits=cls_pred_channels,
+                dim=3)
+
+            reduce_loss += tf.reduce_mean(cross_entropy)
+        return reduce_loss
 
     def add_fire_module(self,
                         input_node,  # input graph node

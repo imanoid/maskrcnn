@@ -1,9 +1,23 @@
 import numpy as np
 import typing
+import data.base as base
 
 
 max_false_iou = 0.3
 min_true_iou = 0.7
+
+
+def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
+        -> typing.Tuple[float, float, float, float]:
+    """
+    convert list of object instances to list of bounding boxes
+    :param object_instances: list of object instances
+    :return: list of bboxes
+    """
+    object_bboxes = list()
+    for object_instance in object_instances:
+        object_bboxes.append(object_instance.bounding_box)
+    return object_bboxes
 
 
 def encode_rpn_output(input_shape: typing.Tuple[int, int],
