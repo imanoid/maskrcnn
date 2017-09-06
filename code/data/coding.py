@@ -20,11 +20,41 @@ def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
     return object_bboxes
 
 
+def translate_coordinates(source_shape: typing.Tuple[int, int],
+                          target_shape: typing.Tuple[int, int],
+                          coordinates: typing.Tuple[float, float]) \
+        -> typing.Tuple[float, float]:
+    """
+    :param source_shape: source (height, width)
+    :param target_shape: target (height, width)
+    :param coordinates: coordinates to transform (y, x)
+    :return: transformed coordinates (y, x)
+    """
+    return (coordinates[0] / source_shape[0] * target_shape[0],
+            coordinates[1] / source_shape[1] * target_shape[1])
+
+
+def translate_bbox(source_shape: typing.Tuple[int, int],
+                   target_shape: typing.Tuple[int, int],
+                   box: typing.Tuple[float, float, float, float]) \
+        -> typing.Tuple[float, float, float, float]:
+    """
+    :param source_shape: source (height, width)
+    :param target_shape: target (height, width)
+    :param box: coordinates to transform (ymin, xmin, ymax, xmax)
+    :return: transformed coordinates (ymin, xmin, ymax, xmax)
+    """
+    return (box[0] / source_shape[0] * target_shape[0],
+            box[1] / source_shape[1] * target_shape[1],
+            box[2] / source_shape[0] * target_shape[0],
+            box[3] / source_shape[1] * target_shape[1])
+
+
 def encode_rpn_output(input_shape: typing.Tuple[int, int],
                       object_bboxes: typing.List[typing.Tuple[float, float, float, float]],
-                      output_shape: typing.Tuple[int, int],
+                      output_shapes: typing.List[typing.Tuple[int, int]],
                       anchors: typing.List[typing.Tuple[float, float]]) \
-        -> typing.Tuple[np.ndarray, np.ndarray]:
+        -> typing.Tuple[typing.List[np.ndarray], typing.List[np.ndarray], typing.List[np.ndarray]]:
     """
     For each position and each anchor, we assign a positive label if: the anchor has highest IoU with a gt box or anchor has IoU > 0.7 with any gt box
                                                  a negative label if: the anchor has IoU < 0.3 for all gt boxes
@@ -32,76 +62,93 @@ def encode_rpn_output(input_shape: typing.Tuple[int, int],
     The bounding box of an anchor corresponds to the object with highest IoU (if positive label)
 
     :param input_shape: array (height, width)
-    :param object_bboxes: list of tuples containing (xmin, ymin, xmax, ymax)
-    :param output_shape: array (height, width)
+    :param object_bboxes: list of tuples containing (ymin, xmin, ymax, xmax)
+    :param output_shapes: list of tuples (height, width)
     :param anchors: list of tuples containing (height, width)
-    :return: ground truth output (width, height, (4+2) * len(anchors)), loss contribution mask (height, width)
+    :return: ground truth regression list of numpy arrays (height, width, 4),
+             ground truth objectness list of numpy arrays (height, width, 2),
+             loss contribution mask list of numpy arrays (height, width)
     """
-    n_anchors = len(anchors)
+    assert(len(anchors) == len(output_shapes))
 
-    output = np.zeros([output_shape[0], output_shape[1], 6 * n_anchors], np.float32)  # for each anchor: objectness (2) + bbox (4)
-    loss_mask = np.zeros([output_shape[0], output_shape[1], n_anchors], np.bool)
+    regression_outputs = list()
+    objectness_outputs = list()
+    loss_masks = list()
 
-    for object_bbox in object_bboxes:
-        for i_anchor, anchor in enumerate(anchors):
-            iou_pos = i_anchor * 6
-            target_start = iou_pos + 2
-            target_end = iou_pos + 6
-            for y_input_pos in range(input_shape[0]):
-                for x_input_pos in range(input_shape[1]):
-                    center = (y_input_pos, x_input_pos)
-                    anchor_bbox = get_anchor_bbox(anchor, center)
-                    iou = intersection_over_union(anchor_bbox, object_bbox)
-                    if output[y_input_pos, x_input_pos, iou_pos] < iou:
-                        output[y_input_pos, x_input_pos, iou_pos] = iou
-                        target_bbox = encode_rpn_bbox(anchor_bbox, object_bbox)
-                        output[y_input_pos, x_input_pos, target_start:target_end] = target_bbox
+    for i_anchor in range(len(anchors)):
+        output_shape = output_shapes[i_anchor]
+        anchor = anchors[i_anchor]
 
-    for i_anchor in range(n_anchors):
+        ious = np.zeros(output_shape, np.float32)
+
+        regression_output = np.zeros([*output_shape, 4], np.float32)
+        objectness_output = np.zeros([*output_shape, 2], np.float32)
+        loss_mask = np.ones(output_shape, np.bool)
+
+        for object_bbox in object_bboxes:
+            for y_output_pos in range(output_shape[0]):
+                for x_output_pos in range(output_shape[1]):
+                    object_bbox_output = translate_bbox(input_shape,
+                                                        output_shape,
+                                                        object_bbox)
+                    anchor_output = translate_coordinates(input_shape,
+                                                          output_shape,
+                                                          anchor)
+                    center = (y_output_pos, x_output_pos)
+                    anchor_bbox_output = get_anchor_bbox(anchor_output, center)
+                    iou = intersection_over_union(anchor_bbox_output, object_bbox_output)
+
+                    if ious[y_output_pos, x_output_pos] < iou:
+                        ious[y_output_pos, x_output_pos] = iou
+                        target_bbox = encode_rpn_bbox(anchor_bbox_output, object_bbox_output)
+                        regression_output[y_output_pos, x_output_pos, :] = target_bbox
+
         for y_input_pos in range(input_shape[0]):
             for x_input_pos in range(input_shape[1]):
-                output_start = i_anchor * 6
-
-                if output[y_input_pos, x_input_pos, i_anchor * 6] < min_true_iou:
+                iou = ious[y_input_pos, x_input_pos]
+                if iou < max_false_iou:
                     # false sample
-                    output[y_input_pos, x_input_pos, output_start: output_start + 2] = (0, 1)
-                    loss_mask[x_input_pos, x_input_pos, i_anchor] = True
-                elif output[y_input_pos, x_input_pos, i_anchor * 6] > max_false_iou:
+                    objectness_output[y_input_pos, x_input_pos, :] = [0, 1]
+                elif iou > min_true_iou:
                     # true sample
-                    loss_mask[y_input_pos, x_input_pos, i_anchor] = True
-                    output[y_input_pos, x_input_pos, output_start: output_start + 2] = (1, 0)
+                    objectness_output[y_input_pos, x_input_pos, :] = [1, 0]
                 else:
                     # ignore sample
-                    output[y_input_pos, x_input_pos, output_start: output_start + 2] = (0, 0)
-                    loss_mask[y_input_pos, x_input_pos, i_anchor] = False
+                    loss_mask[y_input_pos, x_input_pos] = False
 
-    return output, loss_mask
+    return regression_outputs, objectness_outputs, loss_masks
 
 
-def decode_rpn_output(output: np.ndarray,
-                      anchors: typing.List[typing.Tuple[float, float]]) \
-        -> typing.List[typing.Tuple[float, float, float, float]]:
+def rpn_output_nms(roi_boxes: typing.List[base.ROIBox]):
+    pass
+
+
+def decode_rpn_output(objectness_output: np.ndarray,
+                      regression_output: np.ndarray,
+                      anchor: typing.Tuple[float, float]) \
+        -> typing.List[base.ROIBox]:
     """
     Decode the RPN output from the nn.
 
-    :param output: the output
-    :param anchors: the anchors
+    :param objectness_output: numpy array with shape (height, width, 2)
+    :param regression_output: numpy array with shape (height, width, 4)
+    :param anchor: tuple containing (height, width)
     :return: list of roi bboxes
     """
-    output_shape = output.shape
+    output_shape = objectness_output.shape[0:2]
     roi_bboxes = list()
 
-    for i_anchor, anchor in enumerate(anchors):
-        for y_output_pos in range(output_shape[0]):
-            for x_output_pos in range(output_shape[1]):
-                output_start = i_anchor * 6
-                output_bbox_start = output_start + 2
-                output_bbox_end = output_bbox_start + 4
-                objectness = output[y_output_pos, x_output_pos, output_start:output_bbox_start]
-                if np.argmax(objectness) == 0:
-                    encoded_bbox = output[y_output_pos, x_output_pos, output_bbox_start:output_bbox_end]
-                    decoded_bbox = decode_rpn_bbox(anchor, encoded_bbox)
-                    roi_bboxes.append(decoded_bbox)
+    for y_output_pos in range(output_shape[0]):
+        for x_output_pos in range(output_shape[1]):
+            objectness = objectness_output[y_output_pos, x_output_pos, 0]
+            if objectness > 0.5:
+                center = (y_output_pos, x_output_pos)
+                anchor_bbox = get_anchor_bbox(anchor, center)
+                encoded_bbox = regression_output[y_output_pos, x_output_pos, :]
+                decoded_bbox = decode_rpn_bbox(anchor_bbox, encoded_bbox)
+                roi_box = base.ROIBox(objectness=objectness,
+                                      bounding_box=decoded_bbox)
+                roi_bboxes.append(roi_box)
 
     return roi_bboxes
 

@@ -45,3 +45,11 @@ class ObjectInstance(object):
         self.mask = mask
         self.is_truncated = is_truncated
         self.is_difficult = is_difficult
+
+
+class ROIBox(object):
+    def __init__(self,
+                 objectness: float,
+                 bounding_box: typing.Tuple[float, float, float, float]=None):
+        self.objectness = objectness
+        self.bounding_box = bounding_box

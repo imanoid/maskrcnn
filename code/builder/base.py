@@ -27,8 +27,10 @@ class GraphBuilder(object):
                         kernel_size,
                         strides,
                         activation,
-                        batch_norm, split,
-                        is_training, bias):
+                        batch_norm,
+                        split,
+                        is_training,
+                        bias):
         with tf.name_scope("Convolution_%dx%d" % (kernel_size, kernel_size)):
             if split:
                 stddev = 2.0 / np.sqrt(kernel_size * int(node.shape[3]))
@@ -67,7 +69,9 @@ class GraphBuilder(object):
                        strides=1,
                        activation=tf.nn.relu,
                        batch_norm=False,
-                       split=False, is_training=None, bias=True):
+                       split=False,
+                       is_training=None,
+                       bias=True):
         return self._add_conv_layer(node, tf.nn.conv2d, n_outputs, kernel_size, strides, activation, batch_norm, split,
                                     is_training, bias)
 
@@ -78,7 +82,9 @@ class GraphBuilder(object):
                          strides=1,
                          activation=tf.nn.relu,
                          batch_norm=False,
-                         split=False, is_training=None, bias=True):
+                         split=False,
+                         is_training=None,
+                         bias=True):
         return self._add_conv_layer(node, tf.nn.conv2d_transpose, n_outputs, kernel_size, strides, activation,
                                     batch_norm, split, is_training, bias)
 
