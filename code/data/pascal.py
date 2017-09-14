@@ -13,9 +13,9 @@ class PascalVocDataLoader(base.DataLoader):
     def __init__(self,
                  config_name: str,
                  voc_dir: str,
-                 image_shape: typing.Tuple[int, int]=(256, 256),
-                 rpn_shape: typing.Tuple[int, int]=None,
-                 anchors: typing.List[typing.Tuple[float, float]]=None):
+                 image_shape: typing.List[float, float]=(256, 256),
+                 rpn_shape: typing.List[float, float]=None,
+                 anchors: typing.List[typing.List[float, float]]=None):
         self.datasets_dir = os.path.join(voc_dir, "ImageSets")
         self.classificationset_dir = os.path.join(self.datasets_dir, "Main")
         self.segmentationset_dir = os.path.join(self.datasets_dir, "Segmentation")
@@ -23,7 +23,7 @@ class PascalVocDataLoader(base.DataLoader):
         self.images_dir = os.path.join(voc_dir, "JPEGImages")
         self.pickle_dir = os.path.join(voc_dir, config_name)
         os.makedirs(self.pickle_dir)
-        self.image_shape = image_shape
+        self.image_shape = image_shape  # (height, width)
         self.rpn_shape = rpn_shape,
         self.anchors = anchors
 
@@ -84,8 +84,8 @@ class PascalVocDataLoader(base.DataLoader):
 
     # images
     def _load_image_from_sample(self, sample_name: typing.AnyStr) -> np.ndarray:
-        image_data = (ndimage.imread(os.path.join(self.images_dir, sample_name + ".jpg")).astype(np.float32) -
-                      self.image_shape[2] / 2) / self.image_shape[2]
+        # read image
+        image_data = ndimage.imread(os.path.join(self.images_dir, sample_name + ".jpg")).astype(np.float32)
 
         # resize image
         image_data = misc.imresize(image_data, self.image_shape)
@@ -108,17 +108,14 @@ class PascalVocDataLoader(base.DataLoader):
             truncated = bool(obj.find("truncated").text)
             difficult = bool(obj.find("difficult").text)
             bbox = obj.find("bndbox")
-            ymin = int(bbox.find("ymin").text)
-            xmin = int(bbox.find("xmin").text)
-            ymax = int(bbox.find("ymax").text)
-            xmax = int(bbox.find("xmax").text)
+            ymin = float(bbox.find("ymin").text) / height
+            xmin = float(bbox.find("xmin").text) / width
+            ymax = float(bbox.find("ymax").text) / height
+            xmax = float(bbox.find("xmax").text) / width
 
             if self.labels is None or label in self.labels:
                 object_boxes.append(base.ObjectInstance(label,
-                                                        bounding_box=(int(ymin / height * self.image_shape[1]),
-                                                                      int(xmin / width * self.image_shape[0]),
-                                                                      int(ymax / height * self.image_shape[1]),
-                                                                      int(xmax / width * self.image_shape[0])),
+                                                        bounding_box=[ymin, xmin, ymax, xmax],
                                                         is_truncated=truncated,
                                                         is_difficult=difficult))
         return object_boxes

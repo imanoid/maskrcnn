@@ -68,8 +68,8 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
                    anchors: typing.List[typing.List[float, float]],
                    input_shape: typing.List[int, int],
                    iou_threshold: int=0.7,
-                   max_bboxes: int=100):
-        -> typing.Tuple[tf.Tensor, tf.Tensor]
+                   max_bboxes: int=100) \
+            -> typing.Tuple[tf.Tensor, tf.Tensor]:
         """
 
         :param objectness_nodes:
@@ -78,39 +78,53 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
         :param input_shape: list containing (height, width)
         :param iou_threshold:
         :param max_bboxes:
-        :return: tuple containing (bounding boxes, image indices)
+        :return: tuple containing (image indices, bounding boxes)
         """
         n_anchors = len(anchors)
 
         output_shape = objectness_nodes[0].shape[1:3]
-        image_indices = list()
-        selected_boxes = list()
+        image_indices = tf.zeros([1], dtype=tf.int32)
+        selected_boxes = tf.zeros([0, 4], dtype=self.dtype)
         for i_anchor in range(n_anchors):
             assert(objectness_nodes.shape[0] == regression_nodes.shape[0])
-            n_samples = objectness_nodes.shape[0]
-            for i_sample in n_samples:
+
+            coded_anchor_bboxes = coding.encode_anchor_bboxes(input_shape, output_shape, anchors[i_anchor])
+            anchor_node = tf.constant(coded_anchor_bboxes.reshape(-1, 4), tf.float32)
+
+            i_sample = tf.constant(0, tf.int32)
+
+            def max_samples(i_sample: tf.Tensor, image_indices, selected_boxes):
+                return tf.less(i_sample, tf.shape(objectness_nodes)[0])
+
+            def sample_subgraph(i_sample: tf.Tensor, image_indices, selected_boxes):
                 objectness_node = tf.reshape(objectness_nodes[i_anchor][i_sample, :, :, :], [-1, 2])
                 objectness_scores = tf.nn.softmax(objectness_node, dim=1)[:, 0]
 
-                coded_anchor_bboxes = coding.encode_anchor_bboxes(input_shape, output_shape, anchors[i_anchor])
-
-                anchor_node = tf.constant(coded_anchor_bboxes.reshape(-1, 4), tf.float32)
                 regression_node = tf.reshape(regression_nodes[i_anchor][i_sample, :, :, :], [-1, 4])
 
                 regression_corners = tf.add(tf.multiply(regression_node[:, 0:2], anchor_node[:, 2:4]),
                                             anchor_node[:, 0:2])
                 regression_sizes = tf.multiply(tf.exp(tf.subtract(regression_node[:, 2:4], regression_node[:, 0:2])),
                                                anchor_node[:, 2:4])
-                candidate_boxes = tf.concat([regression_corners, tf.add(regression_corners, regression_sizes)], axis=1)
-                selected_indices = tf.image.non_max_suppression(candidate_boxes,
+                regression_boxes = tf.concat([regression_corners, tf.add(regression_corners, regression_sizes)], axis=1)
+                selected_indices = tf.image.non_max_suppression(regression_boxes,
                                                                 objectness_scores,
                                                                 max_bboxes,
                                                                 iou_threshold)
 
-                selected_boxes.append(candidate_boxes[selected_indices, :])
-                image_indices.append(tf.ones_like(selected_indices, dtype=tf.int32))
+                selected_boxes = tf.concat([selected_boxes, regression_boxes[selected_indices, :]], 0)
+                image_indices = tf.concat([image_indices, tf.ones_like(selected_indices, dtype=tf.int32)], 0)
 
-        return tf.concat(selected_boxes, 0), tf.concat(image_indices, 0)
+                return [tf.add(i_sample, 1), image_indices, selected_boxes]
+
+            _, image_indices, selected_boxes = tf.while_loop(max_samples,
+                                                             sample_subgraph,
+                                                             loop_vars=[i_sample, image_indices, selected_boxes],
+                                                             shape_invariants=[i_sample.shape,
+                                                                               tf.TensorShape([None]),
+                                                                               tf.TensorShape([None, 4])])
+
+        return image_indices, selected_boxes
 
     def roi_pooling(self,
                     input: tf.Tensor,
