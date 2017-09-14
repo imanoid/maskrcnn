@@ -8,7 +8,7 @@ min_true_iou = 0.7
 
 
 def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
-        -> typing.Tuple[float, float, float, float]:
+        -> typing.List[typing.List[float, float, float, float]]:
     """
     convert list of object instances to list of bounding boxes
     :param object_instances: list of object instances
@@ -20,40 +20,40 @@ def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
     return object_bboxes
 
 
-def translate_coordinates(source_shape: typing.Tuple[int, int],
-                          target_shape: typing.Tuple[int, int],
-                          coordinates: typing.Tuple[float, float]) \
-        -> typing.Tuple[float, float]:
+def translate_coordinates(source_shape: typing.List[int, int],
+                          target_shape: typing.List[int, int],
+                          coordinates: typing.List[float, float]) \
+        -> typing.List[float, float]:
     """
     :param source_shape: source (height, width)
     :param target_shape: target (height, width)
     :param coordinates: coordinates to transform (y, x)
     :return: transformed coordinates (y, x)
     """
-    return (coordinates[0] / source_shape[0] * target_shape[0],
-            coordinates[1] / source_shape[1] * target_shape[1])
+    return [coordinates[0] / source_shape[0] * target_shape[0],
+            coordinates[1] / source_shape[1] * target_shape[1]]
 
 
-def translate_bbox(source_shape: typing.Tuple[int, int],
-                   target_shape: typing.Tuple[int, int],
-                   box: typing.Tuple[float, float, float, float]) \
-        -> typing.Tuple[float, float, float, float]:
+def translate_bbox(source_shape: typing.List[int, int],
+                   target_shape: typing.List[int, int],
+                   box: typing.List[float, float, float, float]) \
+        -> typing.List[float, float, float, float]:
     """
     :param source_shape: source (height, width)
     :param target_shape: target (height, width)
     :param box: coordinates to transform (ymin, xmin, ymax, xmax)
     :return: transformed coordinates (ymin, xmin, ymax, xmax)
     """
-    return (box[0] / source_shape[0] * target_shape[0],
+    return [box[0] / source_shape[0] * target_shape[0],
             box[1] / source_shape[1] * target_shape[1],
             box[2] / source_shape[0] * target_shape[0],
-            box[3] / source_shape[1] * target_shape[1])
+            box[3] / source_shape[1] * target_shape[1]]
 
 
-def encode_rpn_output(input_shape: typing.Tuple[int, int],
-                      object_bboxes: typing.List[typing.Tuple[float, float, float, float]],
-                      output_shapes: typing.List[typing.Tuple[int, int]],
-                      anchors: typing.List[typing.Tuple[float, float]]) \
+def encode_rpn_output(input_shape: typing.List[int, int],
+                      object_bboxes: typing.List[typing.List[float, float, float, float]],
+                      output_shapes: typing.List[typing.List[int, int]],
+                      anchors: typing.List[typing.List[float, float]]) \
         -> typing.Tuple[typing.List[np.ndarray], typing.List[np.ndarray], typing.List[np.ndarray]]:
     """
     For each position and each anchor, we assign a positive label if: the anchor has highest IoU with a gt box or anchor has IoU > 0.7 with any gt box
@@ -94,7 +94,7 @@ def encode_rpn_output(input_shape: typing.Tuple[int, int],
                     anchor_output = translate_coordinates(input_shape,
                                                           output_shape,
                                                           anchor)
-                    center = (y_output_pos, x_output_pos)
+                    center = [y_output_pos, x_output_pos]
                     anchor_bbox_output = get_anchor_bbox(anchor_output, center)
                     iou = intersection_over_union(anchor_bbox_output, object_bbox_output)
 
@@ -119,13 +119,10 @@ def encode_rpn_output(input_shape: typing.Tuple[int, int],
     return regression_outputs, objectness_outputs, loss_masks
 
 
-def rpn_output_nms(roi_boxes: typing.List[base.ROIBox]):
-    pass
-
-
 def decode_rpn_output(objectness_output: np.ndarray,
                       regression_output: np.ndarray,
-                      anchor: typing.Tuple[float, float]) \
+                      input_shape: typing.List[int, int],
+                      anchor: typing.List[float, float]) \
         -> typing.List[base.ROIBox]:
     """
     Decode the RPN output from the nn.
@@ -142,7 +139,7 @@ def decode_rpn_output(objectness_output: np.ndarray,
         for x_output_pos in range(output_shape[1]):
             objectness = objectness_output[y_output_pos, x_output_pos, 0]
             if objectness > 0.5:
-                center = (y_output_pos, x_output_pos)
+                center = translate_coordinates(output_shape, input_shape, [y_output_pos, x_output_pos])
                 anchor_bbox = get_anchor_bbox(anchor, center)
                 encoded_bbox = regression_output[y_output_pos, x_output_pos, :]
                 decoded_bbox = decode_rpn_bbox(anchor_bbox, encoded_bbox)
@@ -153,24 +150,46 @@ def decode_rpn_output(objectness_output: np.ndarray,
     return roi_bboxes
 
 
-def get_anchor_bbox(anchor: typing.Tuple[float, float],
-                    center: typing.Tuple[float, float]) \
-        -> typing.Tuple[float, float, float, float]:
+def encode_anchor_bboxes(input_shape: typing.List[int, int],
+                         output_shape: typing.List[int, int],
+                         anchor: typing.List[float, float]):
+    """
+    :param input_shape: tuple containing (height, width)
+    :param output_shape: tuple containing (height, width)
+    :param anchor: tuple containing (height, width)
+    :return: numpy array of shape (height, width, 4) where the last dimension contains (ymin, xmin, ymax, xmax)
+    """
+    anchor_bboxes = np.zeros((*output_shape, 4), np.float32)
+
+    for y_output_pos in range(output_shape[0]):
+        for x_output_pos in range(output_shape[1]):
+            center = translate_coordinates(output_shape, input_shape, [y_output_pos, x_output_pos])
+            anchor_bbox = get_anchor_bbox(anchor, center)
+            anchor_bbox[2] -= anchor_bbox[0]
+            anchor_bbox[3] -= anchor_bbox[1]
+            anchor_bboxes[y_output_pos, x_output_pos, :] = anchor_bbox
+
+    return anchor_bboxes
+
+
+def get_anchor_bbox(anchor: typing.List[float, float],
+                    center: typing.List[float, float]) \
+        -> typing.List[float, float, float, float]:
     ymin = center[0] - anchor[0] / 2
     xmin = center[1] - anchor[1] / 2
     ymax = ymin + anchor[0]
     xmax = xmin + anchor[1]
 
-    return ymin, xmin, ymax, xmax
+    return [ymin, xmin, ymax, xmax]
 
 
-def encode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
-                    roi_bbox: typing.Tuple[float, float, float, float]) \
-        -> typing.Tuple[float, float, float, float]:
+def encode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
+                    roi_bbox: typing.List[float, float, float, float]) \
+        -> typing.List[float, float, float, float]:
     """
 
-    :param anchor_bbox: tuple containing (xmin, ymin, xmax, ymax)
-    :param roi_bbox: tuple containing (xmin, ymin, xmax, ymax)
+    :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
+    :param roi_bbox: tuple containing (ymin, xmin, ymax, xmax)
     :return: Target Values -> tuple containing (tx, ty, tw, th)
     """
     y = roi_bbox[0]
@@ -178,22 +197,22 @@ def encode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
     h = roi_bbox[2] - y
     w = roi_bbox[3] - x
 
-    ya = anchor_bbox[0]
-    xa = anchor_bbox[1]
-    ha = anchor_bbox[2] - ya
-    wa = anchor_bbox[3] - xa
+    ay = anchor_bbox[0]
+    ax = anchor_bbox[1]
+    ah = anchor_bbox[2] - ay
+    aw = anchor_bbox[3] - ax
 
-    ty = (y - ya) / ha
-    tx = (x - xa) / wa
-    th = np.log(h / ha)
-    tw = np.log(w / wa)
+    ty = (y - ay) / ah
+    tx = (x - ax) / aw
+    th = np.log(h / ah)
+    tw = np.log(w / aw)
 
-    return ty, tx, th, tw
+    return [ty, tx, th, tw]
 
 
-def decode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
-                    target_bbox: typing.Tuple[float, float, float, float]) \
-        -> typing.Tuple[float, float, float, float]:
+def decode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
+                    target_bbox: typing.List[float, float, float, float]) \
+        -> typing.List[float, float, float, float]:
     """
     :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
     :param target_bbox: tuple containing (ty, tx, th, tw)
@@ -214,11 +233,11 @@ def decode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
     h = np.exp(th) * ah
     w = np.exp(tw) * aw
 
-    return y, x, y + h, x + w
+    return [y, x, y + h, x + w]
 
 
-def intersection_over_union(box_a: typing.Tuple[float, float, float, float],
-                            box_b: typing.Tuple[float, float, float, float]) \
+def intersection_over_union(box_a: typing.List[float, float, float, float],
+                            box_b: typing.List[float, float, float, float]) \
         -> float:
     """
     :param box_a: tuple containing (ymin, xmin, ymax, xmax)

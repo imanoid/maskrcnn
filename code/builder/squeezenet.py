@@ -66,13 +66,13 @@ class SqueezeNetBuilder(base.GraphBuilder):
 
         return segment_tails
 
-    def add_classifier_head(self,
-                            trunk_output_node,  # output from the trunk
-                            n_outputs,  # number of outputs
-                            fc_keepprob=None,  # fc keep probability for dropout
-                            batch_norm=False,
-                            is_training=None
-                            ):
+    def add_conv10(self,
+                   trunk_output_node,  # output from the trunk
+                   n_outputs,  # number of outputs
+                   fc_keepprob=None,  # fc keep probability for dropout
+                   batch_norm=False,
+                   is_training=None
+                   ):
         node = trunk_output_node
         with tf.name_scope("Conv10"):
             if fc_keepprob is not None:
@@ -82,6 +82,20 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                        kernel_size=1,
                                        batch_norm=batch_norm,
                                        is_training=is_training)
+        return node
+
+    def add_classifier_head(self,
+                            trunk_output_node,  # output from the trunk
+                            n_outputs,  # number of outputs
+                            fc_keepprob=None,  # fc keep probability for dropout
+                            batch_norm=False,
+                            is_training=None
+                            ):
+        node = self.add_conv10(trunk_output_node,
+                               n_outputs,
+                               fc_keepprob,
+                               batch_norm,
+                               is_training)
         return self.add_fc_avgpooling_layer(node)
 
     def add_upsampling_pyramid(self,

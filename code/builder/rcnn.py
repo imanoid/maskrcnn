@@ -1,49 +1,165 @@
 import tensorflow as tf
 import data.squeezenet as squeezenet
 import typing
+import data.coding as coding
 
 
 class RCNNBuilder(squeezenet.SqueezeNetBuilder):
     def __init__(self, dtype=tf.float32):
         base.GraphBuilder.__init__(self, dtype)
 
-    def add_roi_pooling(self,
-                        input: tf.Tensor,
-                        bboxes: tf.Tensor,
-                        crop_size: tf.Tensor,
-                        box_indices: tf.Tensor):
-        crop = tf.image.crop_and_resize(image=input,
+    def decode_rpn_output(objectness_output: np.ndarray,
+                          regression_output: np.ndarray,
+                          anchor: typing.Tuple[float, float]) \
+            -> typing.List[base.ROIBox]:
+        """
+        Decode the RPN output from the nn.
+
+        :param objectness_output: numpy array with shape (height, width, 2)
+        :param regression_output: numpy array with shape (height, width, 4)
+        :param anchor: tuple containing (height, width)
+        :return: list of roi bboxes
+        """
+        output_shape = objectness_output.shape[0:2]
+        roi_bboxes = list()
+
+        for y_output_pos in range(output_shape[0]):
+            for x_output_pos in range(output_shape[1]):
+                objectness = objectness_output[y_output_pos, x_output_pos, 0]
+                if objectness > 0.5:
+                    center = (y_output_pos, x_output_pos)
+                    anchor_bbox = get_anchor_bbox(anchor, center)
+                    encoded_bbox = regression_output[y_output_pos, x_output_pos, :]
+                    decoded_bbox = decode_rpn_bbox(anchor_bbox, encoded_bbox)
+                    roi_box = base.ROIBox(objectness=objectness,
+                                          bounding_box=decoded_bbox)
+                    roi_bboxes.append(roi_box)
+
+        return roi_bboxes
+
+    def decode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
+                    target_bbox: typing.Tuple[float, float, float, float]) \
+            -> typing.Tuple[float, float, float, float]:
+        """
+        :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
+        :param target_bbox: tuple containing (ty, tx, th, tw)
+        :return: ROI bbox -> tuple containing (ymin, xmin, ymax, xmax)
+        """
+        ty = target_bbox[0]
+        tx = target_bbox[1]
+        th = target_bbox[2] - ty
+        tw = target_bbox[3] - tx
+
+        ay = anchor_bbox[0]
+        ax = anchor_bbox[1]
+        ah = anchor_bbox[2] - ay
+        aw = anchor_bbox[3] - ax
+
+        y = ty * ah + ay
+        x = tx * aw + ax
+        h = np.exp(th) * ah
+        w = np.exp(tw) * aw
+
+        return y, x, y + h, x + w
+
+    def rpn_bboxes(self,
+                   objectness_nodes: tf.Tensor,
+                   regression_nodes: tf.Tensor,
+                   anchors: typing.List[typing.List[float, float]],
+                   input_shape: typing.List[int, int],
+                   iou_threshold: int=0.7,
+                   max_bboxes: int=100):
+        -> typing.Tuple[tf.Tensor, tf.Tensor]
+        """
+
+        :param objectness_nodes:
+        :param regression_nodes:
+        :param anchors: list of lists containing (height, width)
+        :param input_shape: list containing (height, width)
+        :param iou_threshold:
+        :param max_bboxes:
+        :return: tuple containing (bounding boxes, image indices)
+        """
+        n_anchors = len(anchors)
+
+        output_shape = objectness_nodes[0].shape[1:3]
+        image_indices = list()
+        selected_boxes = list()
+        for i_anchor in range(n_anchors):
+            assert(objectness_nodes.shape[0] == regression_nodes.shape[0])
+            n_samples = objectness_nodes.shape[0]
+            for i_sample in n_samples:
+                objectness_node = tf.reshape(objectness_nodes[i_anchor][i_sample, :, :, :], [-1, 2])
+                objectness_scores = tf.nn.softmax(objectness_node, dim=1)[:, 0]
+
+                coded_anchor_bboxes = coding.encode_anchor_bboxes(input_shape, output_shape, anchors[i_anchor])
+
+                anchor_node = tf.constant(coded_anchor_bboxes.reshape(-1, 4), tf.float32)
+                regression_node = tf.reshape(regression_nodes[i_anchor][i_sample, :, :, :], [-1, 4])
+
+                regression_corners = tf.add(tf.multiply(regression_node[:, 0:2], anchor_node[:, 2:4]),
+                                            anchor_node[:, 0:2])
+                regression_sizes = tf.multiply(tf.exp(tf.subtract(regression_node[:, 2:4], regression_node[:, 0:2])),
+                                               anchor_node[:, 2:4])
+                candidate_boxes = tf.concat([regression_corners, tf.add(regression_corners, regression_sizes)], axis=1)
+                selected_indices = tf.image.non_max_suppression(candidate_boxes,
+                                                                objectness_scores,
+                                                                max_bboxes,
+                                                                iou_threshold)
+
+                selected_boxes.append(candidate_boxes[selected_indices, :])
+                image_indices.append(tf.ones_like(selected_indices, dtype=tf.int32))
+
+        return tf.concat(selected_boxes, 0), tf.concat(image_indices, 0)
+
+    def roi_pooling(self,
+                    input: tf.Tensor,
+                    bboxes: tf.Tensor,
+                    crop_size: tf.Tensor,
+                    box_indices: tf.Tensor,
+                    n_outputs: int=256):
+        return tf.image.crop_and_resize(image=input,
                                         boxes=bboxes,
                                         box_ind=box_indices,
                                         crop_size=crop_size)
-        self.add_fire_module(self,
-                             input,
-                             256,
-                             squeeze_ratio=0.125,  # percentage of squeeze kernels w.r.t. expand kernels
-                             p_3x3=0.5,  # percentage of 3x3 kernels in expand kernels
-                             skip_identity=False,  # if True, an identity skip connection is added
-                             residual_input=None,
-                             batch_norm=False,  # if True, batch normalization is added
-                             is_training=None,  # pass variable indicating if network is training if using batch_norm
-                             conv_keepprob=None)
 
-    def add_simple_rpn_loss(self,
-                            regression_predictions: typing.List[tf.Tensor],
-                            regression_ground_truths: typing.List[tf.Tensor],
-                            objectness_predictions: typing.List[tf.Tensor],
-                            objectness_ground_truths: typing.List[tf.Tensor],
-                            loss_masks: typing.List[tf.Tensor],
-                            regression_loss_weight=tf.constant(10, tf.float32)):
+    def roi_classifier(self,
+                       input: tf.Tensor,
+                       n_outputs: int,
+                       is_training: tf.Tensor,
+                       conv_keepprob: tf.Tensor):
+        n_hidden = input.shape[1]
+        hidden = self.add_fire_module(input,
+                                      n_hidden,
+                                      skip_identity=True,
+                                      batch_norm=True,
+                                      is_training=is_training,
+                                      conv_keepprob=conv_keepprob)
+        output = self.add_fire_module(hidden,
+                                      n_outputs,
+                                      batch_norm=True,
+                                      is_training=is_training,
+                                      conv_keepprob=conv_keepprob
+                                      )
+
+    def simple_rpn_loss(self,
+                        regression_predictions: typing.List[tf.Tensor],
+                        regression_ground_truths: typing.List[tf.Tensor],
+                        objectness_predictions: typing.List[tf.Tensor],
+                        objectness_ground_truths: typing.List[tf.Tensor],
+                        loss_masks: typing.List[tf.Tensor],
+                        regression_loss_weight: int=10):
         assert(len(regression_predictions) ==
                len(regression_ground_truths) ==
                len(objectness_predictions) ==
                len(objectness_ground_truths) ==
                len(loss_masks))
+        regression_loss_weight = tf.constant(regression_loss_weight, self.dtype)
         n_anchors = len(regression_predictions)
         n_samples = regression_predictions[0].shape[0]
 
-        regression_loss = tf.constant(0, tf.float32)
-        objectness_loss = tf.constant(0, tf.float32)
+        regression_loss = None
+        objectness_loss = None
         for i_anchor in range(n_anchors):
             # regression loss
             regression_prediction = regression_predictions[i_anchor]
@@ -57,7 +173,10 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
             anchorwise_smooth_l1norm = tf.where(abs_diff_lt_1,
                                                 0.5 * tf.square(abs_diff),
                                                 abs_diff - 0.5) * loss_mask
-            regression_loss += anchorwise_smooth_l1norm * regression_loss_weight / n_anchor_locations
+            if regression_loss is None:
+                regression_loss = anchorwise_smooth_l1norm * regression_loss_weight / n_anchor_locations
+            else:
+                regression_loss = tf.add(regression_loss, anchorwise_smooth_l1norm * regression_loss_weight / n_anchor_locations)
 
             # objectness_loss
             objectness_prediction = objectness_predictions[i_anchor]
@@ -66,7 +185,10 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
             cross_entropy = tf.nn.softmax_cross_entropy_with_logits(labels=objectness_ground_truth,
                                                                     logits=objectness_prediction,
                                                                     dim=3) * loss_mask
-            objectness_loss += cross_entropy / n_samples
+            if objectness_loss is None:
+                objectness_loss = cross_entropy / n_samples
+            else:
+                objectness_loss = tf.add(objectness_loss, cross_entropy / n_samples)
 
         regression_loss = tf.reduce_sum(regression_loss)
         objectness_loss = tf.reduce_sum(objectness_loss)
@@ -74,15 +196,15 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
 
         return rpn_loss
 
-    def add_simple_rpn_detector(self,
-                                tail,
-                                n_anchors,
-                                n_channels=256,
-                                batch_norm=False,
-                                is_training=None,
-                                conv_keepprob=None,
-                                fc_keepprob=None
-                                ):
+    def simple_rpn_detector(self,
+                            tail,
+                            n_anchors,
+                            n_channels=256,
+                            batch_norm=False,
+                            is_training=None,
+                            conv_keepprob=None,
+                            fc_keepprob=None
+                            ):
         regression_nodes = list()
         objectness_nodes = list()
 

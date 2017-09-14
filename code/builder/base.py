@@ -200,8 +200,8 @@ class GraphBuilder(object):
             moving_mean = tf.Variable(tf.zeros(moments_shape, dtype=self.dtype))
             moving_var = tf.Variable(tf.ones(moments_shape, dtype=self.dtype))
 
-            offset = tf.Variable(tf.zeros(moments_shape, dtype=self.dtype))
-            scale = tf.ones_like(tf.ones(moments_shape, dtype=self.dtype))
+            offset = tf.Variable(np.zeros(moments_shape, dtype=self.dtype))
+            scale = tf.Variable(np.ones(moments_shape, dtype=self.dtype))
 
             def training():
                 [batch_mean, batch_var] = tf.nn.moments(node, moments_axes)
