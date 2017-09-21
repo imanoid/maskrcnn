@@ -3,6 +3,7 @@ from tensorflow.python.training import moving_averages
 import numpy as np
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import gen_nn_ops
+import util
 
 
 # 'backport' from current tensorflow version to support gradient descent with MaxPoolWithArgmax
@@ -74,6 +75,35 @@ class GraphBuilder(object):
                        bias=True):
         return self._add_conv_layer(node, tf.nn.conv2d, n_outputs, kernel_size, strides, activation, batch_norm, split,
                                     is_training, bias)
+    
+    def add_depthwise_conv_layer(self,
+                                 node,
+                                 kernel_size=2,
+                                 strides=1,
+                                 activation=tf.nn.relu,
+                                 batch_norm=False
+                                 is_training=None,
+                                 bias=True)
+        with tf.name_scope("DepthwiseConvolution_%dx%d" % (kernel_size, kernel_size)):
+            stddev = 2.0 / np.sqrt(kernel_size * kernel_size))
+            kernel = tf.Variable(
+                tf.truncated_normal([kernel_size, kernel_size, int(node.shape[3]), 1], 
+                                    stddev=stddev,
+                                    dtype=self.dtype))
+            node = depthwise_conv2d_native(node,
+                                           filter=kernel,
+                                           strides=[1, strides, strides, 1],,
+                                           padding="SAME")
+            if batch_norm:
+                node = self.add_batch_norm(node, is_training, True)
+            elif bias:
+                bias = tf.Variable(tf.random_normal([n_outputs], dtype=self.dtype))
+                node = tf.nn.bias_add(node, bias)
+
+            if activation != None:
+                return activation(node)
+            else:
+                return node
 
     def add_deconv_layer(self,
                          node,
@@ -144,38 +174,6 @@ class GraphBuilder(object):
             kernel_size = int(node.shape[1])
             return self._add_pooling_layer(node, tf.nn.avg_pool, kernel_size=kernel_size, padding="VALID")
 
-    def add_unpooling_layer(self, node, argmax=None, kernel_size=2):
-        with tf.name_scope("Unpooling_%dx%d" % (kernel_size, kernel_size)):
-            if argmax == None:
-                pass
-            else:
-                kernel_elements = kernel_size ** 2
-                input_shape = node.shape.as_list()
-                input_elements = np.prod(input_shape[1:])
-
-                argmax_shape = argmax.shape.as_list()
-                argmax_elements = np.prod(argmax_shape[1:])
-
-                # tf.sparse_to_dence requires the indices of the values (i.e. argmax) to be sorted in ascending order, therefore we do this...
-                argmax, argmax_permutation = tf.nn.top_k(tf.reshape(argmax, [-1, argmax_elements]), k=argmax_elements)
-                argmax = tf.reverse(argmax, axis=[1])
-                argmax_permutation = tf.reverse(argmax_permutation, axis=[1])
-
-                values = tf.reshape(node, [-1, input_elements])
-
-                shape = [input_elements * kernel_elements]
-
-                batch_sparse_to_dense = lambda x: tf.sparse_to_dense(x[0], shape, tf.gather(x[1], x[2]))
-
-                # create flat outputs
-                node = tf.map_fn(batch_sparse_to_dense, (argmax, values, argmax_permutation), dtype=tf.float32)
-
-                # reshape to sparse output matrix
-                node = tf.reshape(node,
-                                  [-1, input_shape[1] * kernel_size, input_shape[2] * kernel_size, input_shape[3]])
-
-                return node
-
     def add_upsampling_layer(self, node, factor=2):
         node_shape = node.shape.as_list()
         with tf.name_scope("Upsampling"):
@@ -220,3 +218,14 @@ class GraphBuilder(object):
             node = tf.cond(is_training, training, testing)
             node.set_shape(node_shape)
             return node
+    
+    def add_channel_shuffle(self,
+                            node,
+                            n_groups):                        
+        with tf.name_scope("ChannelShuffle"):
+            input_shape = node.shape
+            node = tf.reshape(node, (*input_shape[0:3], n_groups, -1))
+            node = tf.transpose(node, (0, 1, 2, 4, 3))
+            node = tf.reshape(node, input_shape)
+        
+        return node

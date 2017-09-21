@@ -4,63 +4,9 @@ import typing
 import data.coding as coding
 
 
-class RCNNBuilder(squeezenet.SqueezeNetBuilder):
+class RCNNBuilder(base.GraphBuilder):
     def __init__(self, dtype=tf.float32):
         base.GraphBuilder.__init__(self, dtype)
-
-    def decode_rpn_output(objectness_output: np.ndarray,
-                          regression_output: np.ndarray,
-                          anchor: typing.Tuple[float, float]) \
-            -> typing.List[base.ROIBox]:
-        """
-        Decode the RPN output from the nn.
-
-        :param objectness_output: numpy array with shape (height, width, 2)
-        :param regression_output: numpy array with shape (height, width, 4)
-        :param anchor: tuple containing (height, width)
-        :return: list of roi bboxes
-        """
-        output_shape = objectness_output.shape[0:2]
-        roi_bboxes = list()
-
-        for y_output_pos in range(output_shape[0]):
-            for x_output_pos in range(output_shape[1]):
-                objectness = objectness_output[y_output_pos, x_output_pos, 0]
-                if objectness > 0.5:
-                    center = (y_output_pos, x_output_pos)
-                    anchor_bbox = get_anchor_bbox(anchor, center)
-                    encoded_bbox = regression_output[y_output_pos, x_output_pos, :]
-                    decoded_bbox = decode_rpn_bbox(anchor_bbox, encoded_bbox)
-                    roi_box = base.ROIBox(objectness=objectness,
-                                          bounding_box=decoded_bbox)
-                    roi_bboxes.append(roi_box)
-
-        return roi_bboxes
-
-    def decode_rpn_bbox(anchor_bbox: typing.Tuple[float, float, float, float],
-                    target_bbox: typing.Tuple[float, float, float, float]) \
-            -> typing.Tuple[float, float, float, float]:
-        """
-        :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
-        :param target_bbox: tuple containing (ty, tx, th, tw)
-        :return: ROI bbox -> tuple containing (ymin, xmin, ymax, xmax)
-        """
-        ty = target_bbox[0]
-        tx = target_bbox[1]
-        th = target_bbox[2] - ty
-        tw = target_bbox[3] - tx
-
-        ay = anchor_bbox[0]
-        ax = anchor_bbox[1]
-        ah = anchor_bbox[2] - ay
-        aw = anchor_bbox[3] - ax
-
-        y = ty * ah + ay
-        x = tx * aw + ax
-        h = np.exp(th) * ah
-        w = np.exp(tw) * aw
-
-        return y, x, y + h, x + w
 
     def rpn_bboxes(self,
                    objectness_nodes: tf.Tensor,
@@ -99,13 +45,20 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
             def sample_subgraph(i_sample: tf.Tensor, image_indices, selected_boxes):
                 objectness_node = tf.reshape(objectness_nodes[i_anchor][i_sample, :, :, :], [-1, 2])
                 objectness_scores = tf.nn.softmax(objectness_node, dim=1)[:, 0]
+                
+                true_indices = tf.where(tf.greater_equal(objectness_scores, [.5]))
+                
+                objectness_scores = objectness_scores[true_indices]
+                
+                valid_anchor_node = anchor_node[true_indices, :]
 
                 regression_node = tf.reshape(regression_nodes[i_anchor][i_sample, :, :, :], [-1, 4])
+                regression_node = regression_node[true_indices, :]
 
-                regression_corners = tf.add(tf.multiply(regression_node[:, 0:2], anchor_node[:, 2:4]),
-                                            anchor_node[:, 0:2])
+                regression_corners = tf.add(tf.multiply(regression_node[:, 0:2], valid_anchor_node[:, 2:4]),
+                                            valid_anchor_node[:, 0:2])
                 regression_sizes = tf.multiply(tf.exp(tf.subtract(regression_node[:, 2:4], regression_node[:, 0:2])),
-                                               anchor_node[:, 2:4])
+                                               valid_anchor_node[:, 2:4])
                 regression_boxes = tf.concat([regression_corners, tf.add(regression_corners, regression_sizes)], axis=1)
                 selected_indices = tf.image.non_max_suppression(regression_boxes,
                                                                 objectness_scores,
@@ -136,25 +89,6 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
                                         boxes=bboxes,
                                         box_ind=box_indices,
                                         crop_size=crop_size)
-
-    def roi_classifier(self,
-                       input: tf.Tensor,
-                       n_outputs: int,
-                       is_training: tf.Tensor,
-                       conv_keepprob: tf.Tensor):
-        n_hidden = input.shape[1]
-        hidden = self.add_fire_module(input,
-                                      n_hidden,
-                                      skip_identity=True,
-                                      batch_norm=True,
-                                      is_training=is_training,
-                                      conv_keepprob=conv_keepprob)
-        output = self.add_fire_module(hidden,
-                                      n_outputs,
-                                      batch_norm=True,
-                                      is_training=is_training,
-                                      conv_keepprob=conv_keepprob
-                                      )
 
     def simple_rpn_loss(self,
                         regression_predictions: typing.List[tf.Tensor],
@@ -233,28 +167,28 @@ class RCNNBuilder(squeezenet.SqueezeNetBuilder):
 
         for i_anchor in range(n_anchors):
             with tf.name_scope("rpn_anchor{}".format(i_anchor)):
-                regression_node = tail
-                with tf.name_scope("regression".format(i_anchor)):
-                    if fc_keepprob is not None:
-                        regression_node = self.add_dropout_layer(regression_node, fc_keepprob)
-                    regression_node = self.add_conv_layer(regression_node,
-                                                          4,
-                                                          kernel_size=7,
-                                                          batch_norm=batch_norm,
-                                                          is_training=is_training,
-                                                          bias=False)
-                    regression_nodes.append(regression_node)
-
                 objectness_node = tail
                 with tf.name_scope("objectness".format(i_anchor)):
                     if fc_keepprob is not None:
                         objectness_node = self.add_dropout_layer(objectness_node, fc_keepprob)
                     objectness_node = self.add_conv_layer(objectness_node,
                                                           2,
-                                                          kernel_size=7,
+                                                          kernel_size=3,
                                                           batch_norm=batch_norm,
                                                           is_training=is_training,
                                                           bias=False)
                     objectness_nodes.append(objectness_node)
+                
+                regression_node = tail
+                with tf.name_scope("regression".format(i_anchor)):
+                    if fc_keepprob is not None:
+                        regression_node = self.add_dropout_layer(regression_node, fc_keepprob)
+                    regression_node = self.add_conv_layer(regression_node,
+                                                          4,
+                                                          kernel_size=3,
+                                                          batch_norm=batch_norm,
+                                                          is_training=is_training,
+                                                          bias=False)
+                    regression_nodes.append(regression_node)
 
         return objectness_nodes, regression_nodes

@@ -12,6 +12,8 @@ class SqueezeNetBuilder(base.GraphBuilder):
                   first_conv_ksize=3,  # kernel size of first convolution
                   first_conv_stride=2,  # stride of first convolution
                   first_conv_kernels=96,  # number of kernels in first convolution layer
+                  first_pool_ksize=3,
+                  first_pool_stride=2,
                   n_modules=10,  # number of modules
                   base_outputs=128,  # n_outputs of first fire module
                   incr_outputs=128,  # step by which to increase output depth every freq units
@@ -20,7 +22,7 @@ class SqueezeNetBuilder(base.GraphBuilder):
                   p_3x3=0.5,  # percentage of 3x3 kernels in expand kernels
                   skip_identity=True,  # true if residual identity connections should be added
                   batch_norm=False,  # if True, batch normalization is added
-                  is_training=None,  # pass variable indicating if network is training if using batch_norm
+                  is_training=None,  # pass variable indicating if network is training
                   input_keepprob=None,  # input keep probability for dropout
                   conv_keepprob=None  # conv keep probability for dropout
                   ):
@@ -39,7 +41,9 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                        is_training=is_training,
                                        bias=False)
         if 1 in pooled_firemodules:
-            node = self.add_maxpooling_layer(node)
+            node = self.add_maxpooling_layer(node, 
+                                             kernel_size=first_pool_ksize, 
+                                             strides=first_pool_stride)
 
         segment_tails = []
         n_module_outputs = base_outputs
@@ -56,13 +60,19 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                             residual_input=None,
                                             batch_norm=batch_norm,
                                             is_training=is_training,
-                                            conv_keepprob=conv_keepprob,)
+                                            conv_keepprob=conv_keepprob)
 
                 if i_module in pooled_firemodules:
                     node = self.add_maxpooling_layer(node, kernel_size=3, strides=2)
-                    segment_tails.append(node)
+                    segment_tail = node
+                    if batch_norm:
+                        segment_tail = self.add_batch_norm(segment_tail, is_training=is_training, global_norm=True)
+                    segment_tails.append(tf.nn.relu(segment_tail))
                 elif i_module == n_modules - 1:
-                    segment_tails.append(node)
+                    segment_tail = node
+                    if batch_norm:
+                        segment_tail = self.add_batch_norm(segment_tail, is_training=is_training, global_norm=True)
+                    segment_tails.append(tf.nn.relu(segment_tail))
 
         return segment_tails
 
@@ -84,22 +94,10 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                        is_training=is_training)
         return node
 
-    def add_classifier_head(self,
-                            trunk_output_node,  # output from the trunk
-                            n_outputs,  # number of outputs
-                            fc_keepprob=None,  # fc keep probability for dropout
-                            batch_norm=False,
-                            is_training=None
-                            ):
-        node = self.add_conv10(trunk_output_node,
-                               n_outputs,
-                               fc_keepprob,
-                               batch_norm,
-                               is_training)
-        return self.add_fc_avgpooling_layer(node)
-
     def add_upsampling_pyramid(self,
                                segment_tails,  # tails of the trunk segments outputs
+                               unpooled_firemodules=None,  # modules at which to unpool
+                               n_modules=4,  # number of modules
                                squeeze_ratio=.125,
                                p_3x3=0.5,
                                conv_keepprob=None,
@@ -107,6 +105,9 @@ class SqueezeNetBuilder(base.GraphBuilder):
                                is_training=None,
                                skip_identity=True
                                ):
+        if unpooled_firemodules == None:
+            unpooled_firemodules = [0, 2]
+        assert(len(segment_tails) - 1 == len(unpooled_firemodules))
         node = None
 
         feature_maps = []
@@ -146,40 +147,56 @@ class SqueezeNetBuilder(base.GraphBuilder):
                         ):
         assert (type(n_outputs) == int)
 
-        with tf.name_scope("FireModule"):
-            input_shape = input_node.shape.as_list()
+        input_shape = input_node.shape.as_list()
 
-            input_channels = input_shape[3]
+        input_channels = input_shape[3]
 
-            squeeze_input_node = input_node
+        squeeze_input_node = input_node
 
-            if batch_norm:
-                squeeze_input_node = self.add_batch_norm(input_node, is_training=is_training, global_norm=True)
-            squeeze_input_node = tf.nn.relu(squeeze_input_node)
+        if batch_norm:
+            squeeze_input_node = self.add_batch_norm(input_node, is_training=is_training, global_norm=True)
+        squeeze_input_node = tf.nn.relu(squeeze_input_node)
 
-            assert (float(n_outputs) * squeeze_ratio * p_3x3 == int(float(n_outputs) * squeeze_ratio * p_3x3))
+        assert (float(n_outputs) * squeeze_ratio * p_3x3 == int(float(n_outputs) * squeeze_ratio * p_3x3))
 
-            s_1x1 = int(float(n_outputs) * squeeze_ratio)  # squeeze depth
-            e_3x3 = int(float(n_outputs) * p_3x3)  # number of expand 3x3 kernels
-            e_1x1 = int(n_outputs - e_3x3)  # number of expand 1x1 kernels
+        s_1x1 = int(float(n_outputs) * squeeze_ratio)  # squeeze depth
+        e_3x3 = int(float(n_outputs) * p_3x3)  # number of expand 3x3 kernels
+        e_1x1 = int(n_outputs - e_3x3)  # number of expand 1x1 kernels
 
-            if conv_keepprob is not None:
-                squeeze_input_node = self.add_dropout_layer(squeeze_input_node, conv_keepprob)
+        if conv_keepprob is not None:
+            squeeze_input_node = self.add_dropout_layer(squeeze_input_node, conv_keepprob)
 
-            node = self.add_conv_layer(squeeze_input_node, s_1x1, kernel_size=1, batch_norm=batch_norm,
-                                       is_training=is_training, bias=False)
+        node = self.add_conv_layer(squeeze_input_node, s_1x1, kernel_size=1, batch_norm=batch_norm,
+                                   is_training=is_training, bias=False)
 
-            if conv_keepprob is not None:
-                node = self.add_dropout_layer(node, conv_keepprob)
+        if conv_keepprob is not None:
+            node = self.add_dropout_layer(node, conv_keepprob)
 
-            branch_1x1 = self.add_conv_layer(node, e_1x1, kernel_size=1, activation=None)
-            branch_3x3 = self.add_conv_layer(node, e_3x3, kernel_size=3, activation=None)
+        branch_1x1 = self.add_conv_layer(node, e_1x1, kernel_size=1, activation=None)
+        branch_3x3 = self.add_conv_layer(node, e_3x3, kernel_size=3, activation=None)
 
-            output_node = tf.concat([branch_1x1, branch_3x3], 3)
+        output_node = tf.concat([branch_1x1, branch_3x3], 3)
 
-            if residual_input is not None:
-                output_node = tf.add(residual_input, output_node)
-            if input_channels == n_outputs and skip_identity:
-                output_node = tf.add(input_node, output_node)
+        if residual_input is not None:
+            output_node = tf.add(residual_input, output_node)
+        if input_channels == n_outputs and skip_identity:
+            output_node = tf.add(input_node, output_node)
 
-            return output_node
+        return output_node
+
+    def add_classifier_head(self,
+                            trunk_output_node,  # output from the trunk
+                            n_outputs,  # number of outputs
+                            fc_keepprob=None,  # fc keep probability for dropout
+                            batch_norm=False,
+                            is_training=None
+                            ):
+        with tf.name_scope("ClassifierHead"):
+            node = self.add_conv10(trunk_output_node,
+                                   n_outputs,
+                                   fc_keepprob,
+                                   batch_norm,
+                                   is_training)
+            node = self.add_fc_avgpooling_layer(node)
+            node = tf.reshape(node, (-1, n_outputs))
+        return node

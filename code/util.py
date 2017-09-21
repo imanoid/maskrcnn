@@ -9,3 +9,11 @@ class StopWatch(object):
 
     def stop(self):
         return (datetime.now() - self.start_time).total_seconds() * 1e3
+
+
+def is_iterable(o):
+    try:
+        iter(o)
+        return True
+    except:
+        return False
