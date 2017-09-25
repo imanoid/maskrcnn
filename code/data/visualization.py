@@ -2,6 +2,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 from matplotlib import pyplot as plt
 
+
 class Visualizer(object):
     def __init__(self,
                  labels):

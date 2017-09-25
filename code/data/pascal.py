@@ -51,9 +51,9 @@ class PascalVocDataLoader(base.DataLoader):
                 print("No anchors specified. Not initializting rpn output!")
             else:
                 rpn_output, rpn_loss_mask = coding.encode_rpn_output(self.image_shape,
-                                                      coding.objects_to_bboxes(object_instances),
-                                                      self.rpn_shape,
-                                                      self.anchors)
+                                                                     coding.objects_to_bboxes(object_instances),
+                                                                     self.rpn_shape,
+                                                                     self.anchors)
                 sample["rpn_output"] = rpn_output
                 sample["rpn_loss_mask"] = rpn_loss_mask
 

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+
 class StopWatch(object):
     def __init__(self):
         self.start_time = None
@@ -17,3 +18,8 @@ def is_iterable(o):
         return True
     except:
         return False
+
+
+def get_time_string():
+    now = datetime.now()
+    return "{}.{}.{}-{}.{}.{}".format(now.year, now.month, now.day, now.hour, now.minute, now.second)

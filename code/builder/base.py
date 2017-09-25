@@ -21,6 +21,7 @@ class GraphBuilder(object):
     def __init__(self, dtype=tf.float32):
         self.dtype = dtype
 
+    # basic elements
     def _add_conv_layer(self,
                         node,
                         function,
@@ -81,19 +82,20 @@ class GraphBuilder(object):
                                  kernel_size=2,
                                  strides=1,
                                  activation=tf.nn.relu,
-                                 batch_norm=False
+                                 batch_norm=False,
                                  is_training=None,
-                                 bias=True)
+                                 bias=True):
         with tf.name_scope("DepthwiseConvolution_%dx%d" % (kernel_size, kernel_size)):
-            stddev = 2.0 / np.sqrt(kernel_size * kernel_size))
+            n_outputs = tf.shape(node, 3)
+            stddev = 2.0 / np.sqrt(kernel_size * kernel_size)
             kernel = tf.Variable(
                 tf.truncated_normal([kernel_size, kernel_size, int(node.shape[3]), 1], 
                                     stddev=stddev,
                                     dtype=self.dtype))
-            node = depthwise_conv2d_native(node,
-                                           filter=kernel,
-                                           strides=[1, strides, strides, 1],,
-                                           padding="SAME")
+            node = tf.nn.depthwise_conv2d_native(node,
+                                                 filter=kernel,
+                                                 strides=[1, strides, strides, 1],
+                                                 padding="SAME")
             if batch_norm:
                 node = self.add_batch_norm(node, is_training, True)
             elif bias:
