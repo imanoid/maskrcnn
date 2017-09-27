@@ -1,6 +1,6 @@
 import numpy as np
 import typing
-import data.base as base
+from data import base
 
 
 max_false_iou = 0.3
@@ -8,7 +8,7 @@ min_true_iou = 0.7
 
 
 def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
-        -> typing.List[typing.List[float, float, float, float]]:
+        -> typing.List[typing.List[float]]:
     """
     convert list of object instances to list of bounding boxes
     :param object_instances: list of object instances
@@ -20,9 +20,9 @@ def objects_to_bboxes(object_instances: typing.List[base.ObjectInstance]) \
     return object_bboxes
 
 
-def image_coordinates(target_shape: typing.List[int, int],
-                      coordinates: typing.List[float, float]) \
-        -> typing.List[float, float]:
+def image_coordinates(target_shape: typing.List[int],
+                      coordinates: typing.List[float]) \
+        -> typing.List[float]:
     """
     :param target_shape: target (height, width)
     :param coordinates: coordinates to transform (y, x)
@@ -32,9 +32,9 @@ def image_coordinates(target_shape: typing.List[int, int],
             coordinates[1] * target_shape[1]]
 
 
-def normalize_coordinates(source_shape: typing.List[int, int],
-                          coordinates: typing.List[float, float]) \
-        -> typing.List[float, float]:
+def normalize_coordinates(source_shape: typing.List[int],
+                          coordinates: typing.List[float]) \
+        -> typing.List[float]:
     """
     :param source_shape: target (height, width)
     :param coordinates: coordinates to transform (y, x)
@@ -44,9 +44,9 @@ def normalize_coordinates(source_shape: typing.List[int, int],
             coordinates[1] / source_shape[1]]
 
 
-def translate_bbox(target_shape: typing.List[int, int],
-                   box: typing.List[float, float, float, float]) \
-        -> typing.List[float, float, float, float]:
+def translate_bbox(target_shape: typing.List[int],
+                   box: typing.List[float]) \
+        -> typing.List[float]:
     """
     :param target_shape: target (height, width)
     :param box: coordinates to transform (ymin, xmin, ymax, xmax)
@@ -58,9 +58,9 @@ def translate_bbox(target_shape: typing.List[int, int],
             box[3] * target_shape[1]]
 
 
-def encode_rpn_output(object_bboxes: typing.List[typing.List[float, float, float, float]],
-                      output_shapes: typing.List[typing.List[int, int]],
-                      anchors: typing.List[typing.List[float, float]]) \
+def encode_rpn_output(object_bboxes: typing.List[typing.List[float]],
+                      output_shapes: typing.List[typing.List[int]],
+                      anchors: typing.List[typing.List[float]]) \
         -> typing.Tuple[typing.List[np.ndarray], typing.List[np.ndarray], typing.List[np.ndarray]]:
     """
     For each position and each anchor, we assign a positive label if: the anchor has highest IoU with a gt box or anchor has IoU > 0.7 with any gt box
@@ -121,7 +121,7 @@ def encode_rpn_output(object_bboxes: typing.List[typing.List[float, float, float
 
 def decode_rpn_output(objectness_output: np.ndarray,
                       regression_output: np.ndarray,
-                      anchor: typing.List[float, float]) \
+                      anchor: typing.List[float]) \
         -> typing.List[base.ROIBox]:
     """
     Decode the RPN output from the nn.
@@ -149,8 +149,8 @@ def decode_rpn_output(objectness_output: np.ndarray,
     return roi_bboxes
 
 
-def encode_anchor_bboxes(output_shape: typing.List[int, int],
-                         anchor: typing.List[float, float]):
+def encode_anchor_bboxes(output_shape: typing.List[int],
+                         anchor: typing.List[float]):
     """
     :param input_shape: tuple containing (height, width)
     :param output_shape: tuple containing (height, width)
@@ -170,9 +170,9 @@ def encode_anchor_bboxes(output_shape: typing.List[int, int],
     return anchor_bboxes
 
 
-def get_anchor_bbox(anchor: typing.List[float, float],
-                    center: typing.List[float, float]) \
-        -> typing.List[float, float, float, float]:
+def get_anchor_bbox(anchor: typing.List[float],
+                    center: typing.List[float]) \
+        -> typing.List[float]:
     ymin = center[0] - anchor[0] / 2
     xmin = center[1] - anchor[1] / 2
     ymax = ymin + anchor[0]
@@ -181,9 +181,9 @@ def get_anchor_bbox(anchor: typing.List[float, float],
     return [ymin, xmin, ymax, xmax]
 
 
-def encode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
-                    roi_bbox: typing.List[float, float, float, float]) \
-        -> typing.List[float, float, float, float]:
+def encode_rpn_bbox(anchor_bbox: typing.List[float],
+                    roi_bbox: typing.List[float]) \
+        -> typing.List[float]:
     """
 
     :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
@@ -208,9 +208,9 @@ def encode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
     return [ty, tx, th, tw]
 
 
-def decode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
-                    target_bbox: typing.List[float, float, float, float]) \
-        -> typing.List[float, float, float, float]:
+def decode_rpn_bbox(anchor_bbox: typing.List[float],
+                    target_bbox: typing.List[float]) \
+        -> typing.List[float]:
     """
     :param anchor_bbox: tuple containing (ymin, xmin, ymax, xmax)
     :param target_bbox: tuple containing (ty, tx, th, tw)
@@ -234,8 +234,8 @@ def decode_rpn_bbox(anchor_bbox: typing.List[float, float, float, float],
     return [y, x, y + h, x + w]
 
 
-def intersection_over_union(box_a: typing.List[float, float, float, float],
-                            box_b: typing.List[float, float, float, float]) \
+def intersection_over_union(box_a: typing.List[float],
+                            box_b: typing.List[float]) \
         -> float:
     """
     :param box_a: tuple containing (ymin, xmin, ymax, xmax)
@@ -263,3 +263,19 @@ def intersection_over_union(box_a: typing.List[float, float, float, float],
 
     # return the intersection over union value
     return iou
+
+
+def make_multiclass_onehot(labels: typing.List,
+                           all_labels: typing.List) -> np.ndarray:
+    label_indices = list()
+    n_all_labels = len(all_labels)
+    for label in labels:
+        label_indices.append(all_labels.index(label))
+    onehot_vector = np.zeros((n_all_labels), np.float32)
+    onehot_vector[label_indices] = 1
+    multiclass_onehot_vector = np.zeros((n_all_labels, 2), np.float32)
+    multiclass_onehot_vector[:,0] = onehot_vector != 1
+    multiclass_onehot_vector[:,1] = onehot_vector
+
+    return multiclass_onehot_vector
+

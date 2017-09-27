@@ -13,19 +13,22 @@ class PascalVocDataLoader(base.DataLoader):
     def __init__(self,
                  config_name: str,
                  voc_dir: str,
-                 image_shape: typing.List[float, float]=(256, 256),
-                 rpn_shape: typing.List[float, float]=None,
-                 anchors: typing.List[typing.List[float, float]]=None):
+                 image_shape: typing.List[float]=(256, 256),
+                 rpn_shape: typing.List[float]=None,
+                 anchors: typing.List[typing.List[float]]=None,
+                 object_labels: typing.List[typing.AnyStr]=None):
         self.datasets_dir = os.path.join(voc_dir, "ImageSets")
         self.classificationset_dir = os.path.join(self.datasets_dir, "Main")
         self.segmentationset_dir = os.path.join(self.datasets_dir, "Segmentation")
         self.annotations_dir = os.path.join(voc_dir, "Annotations")
         self.images_dir = os.path.join(voc_dir, "JPEGImages")
         self.pickle_dir = os.path.join(voc_dir, config_name)
-        os.makedirs(self.pickle_dir)
+        if not os.path.exists(self.pickle_dir):
+            os.makedirs(self.pickle_dir)
         self.image_shape = image_shape  # (height, width)
         self.rpn_shape = rpn_shape,
         self.anchors = anchors
+        self.object_labels = object_labels
 
     def initialize_data(self):
         # init samples
@@ -40,27 +43,30 @@ class PascalVocDataLoader(base.DataLoader):
             # init image
             sample["image"] = self._load_image_from_sample(sample_name)
 
-            # init bounding boxes and masks
-            object_instances = self._load_objects_from_sample(sample_name)
-            sample["objects"] = object_instances
+            if False:
+                # init bounding boxes and masks
+                object_instances = self._load_objects_from_sample(sample_name)
+                sample["objects"] = object_instances
 
-            # init RPN output
-            if self.rpn_shape is None:
-                print("No rpn shape specified. Not initializing rpn output!")
-            elif self.anchors is None:
-                print("No anchors specified. Not initializting rpn output!")
-            else:
-                rpn_output, rpn_loss_mask = coding.encode_rpn_output(self.image_shape,
-                                                                     coding.objects_to_bboxes(object_instances),
-                                                                     self.rpn_shape,
-                                                                     self.anchors)
-                sample["rpn_output"] = rpn_output
-                sample["rpn_loss_mask"] = rpn_loss_mask
+                # init RPN output
+                if self.rpn_shape is None:
+                    print("No rpn shape specified. Not initializing rpn output!")
+                elif self.anchors is None:
+                    print("No anchors specified. Not initializting rpn output!")
+                else:
+                    rpn_output, rpn_loss_mask = coding.encode_rpn_output(self.image_shape,
+                                                                         coding.objects_to_bboxes(object_instances),
+                                                                         self.rpn_shape,
+                                                                         self.anchors)
+                    sample["rpn_output"] = rpn_output
+                    sample["rpn_loss_mask"] = rpn_loss_mask
 
-            #"objects": None,
-                      #"segmentation": None,
-                      #"labels": None}
+                #"objects": None,
+                          #"segmentation": None,
+                          #"labels": None}
             self._save_sample(sample, sample_name)
+
+        self._save_sample_names(sample_names)
 
         # init sample labels
         labels = self._load_labels()
@@ -68,19 +74,35 @@ class PascalVocDataLoader(base.DataLoader):
             label_samples = self._load_image_files_from_label(label)
             for label_sample in label_samples:
                 sample = self._load_sample(label_sample)
-                if "labels" in sample:
-                    sample["labels"] = None
+                if "labels" not in sample:
+                    sample["labels"] = list()
                 sample["labels"].append(label)
                 self._save_sample(sample, label_sample)
 
+        for sample_name in sample_names:
+            sample = self._load_sample(sample_name)
+            if "labels" in sample:
+                sample["multiclass_onehot"] = coding.make_multiclass_onehot(sample["labels"], labels)
+                self._save_sample(sample, sample_name)
+
+        return sample_names
+
     # samples
     def _load_sample(self, sample_name: typing.AnyStr) -> typing.Dict:
-        with open(os.path.join(self.pickle_dir, "{}.json".format(sample_name)), "rb") as f:
+        with open(os.path.join(self.pickle_dir, "{}.pickle".format(sample_name)), "rb") as f:
             return pickle.load(f)
 
     def _save_sample(self, sample: typing.Dict, sample_name: typing.AnyStr):
-        with open(os.path.join(self.pickle_dir, "{}.json".format(sample_name)), "wb") as f:
+        with open(os.path.join(self.pickle_dir, "{}.pickle".format(sample_name)), "wb") as f:
             pickle.dump(sample, f)
+
+    def load_sample_names(self) -> typing.List[typing.AnyStr]:
+        with open(os.path.join(self.pickle_dir, "sample_names.pickle"), "rb") as f:
+            return pickle.load(f)
+
+    def _save_sample_names(self, sample_names: typing.List[typing.AnyStr]):
+        with open(os.path.join(self.pickle_dir, "sample_names.pickle"), "wb") as f:
+            pickle.dump(sample_names, f)
 
     # images
     def _load_image_from_sample(self, sample_name: typing.AnyStr) -> np.ndarray:
@@ -100,6 +122,7 @@ class PascalVocDataLoader(base.DataLoader):
         height = int(size.find("height").text)
 
         object_boxes = []
+        labels = self._load_labels()
 
         # initialize bounding boxes
         objs = ann.findall("object")
@@ -113,7 +136,7 @@ class PascalVocDataLoader(base.DataLoader):
             ymax = float(bbox.find("ymax").text) / height
             xmax = float(bbox.find("xmax").text) / width
 
-            if self.labels is None or label in self.labels:
+            if self.object_labels is None or label in self.object_labels:
                 object_boxes.append(base.ObjectInstance(label,
                                                         bounding_box=[ymin, xmin, ymax, xmax],
                                                         is_truncated=truncated,
@@ -161,8 +184,6 @@ class PascalVocDataLoader(base.DataLoader):
 
     def _load_labels(self):
         all_files = os.listdir(self.classificationset_dir)
-        labels = sorted(list(set([filename.replace('.txt', '').strip().split('_')[0] for filename in all_files])))
-        labels.remove("trainval")
-        labels.remove("val")
+        labels = sorted(list(set([filename.replace('.txt', '').strip().split('_')[0] for filename in all_files if filename.find("_") != -1])))
 
         return labels
