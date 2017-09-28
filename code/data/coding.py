@@ -273,9 +273,6 @@ def make_multiclass_onehot(labels: typing.List,
         label_indices.append(all_labels.index(label))
     onehot_vector = np.zeros((n_all_labels), np.float32)
     onehot_vector[label_indices] = 1
-    multiclass_onehot_vector = np.zeros((n_all_labels, 2), np.float32)
-    multiclass_onehot_vector[:,0] = onehot_vector != 1
-    multiclass_onehot_vector[:,1] = onehot_vector
 
-    return multiclass_onehot_vector
+    return onehot_vector
 

@@ -1,5 +1,5 @@
 import tensorflow as tf
-import data.base as base
+import builder.base as base
 
 
 class ShuffleNetBuilder(base.GraphBuilder):
@@ -99,6 +99,8 @@ class ShuffleNetBuilder(base.GraphBuilder):
         elif stride == 2:
             n_input_channels = nodes[0].shape[3] * n_groups
             n_branch_output_channels = n_channels - n_input_channels
+        else:
+            raise ValueError("Stride {} is invalid for shuffle module!")
             
         n_hidden_channels = n_branch_output_channels * bottleneck_ratio
         
@@ -108,7 +110,7 @@ class ShuffleNetBuilder(base.GraphBuilder):
         
         with tf.name_scope("InputActivation"):
             if batch_norm:
-                nodes = self.add_group_batch_norm(nodes, is_training=is_training, global_norm=True)
+                nodes = self.add_group_batchnorm(nodes, is_training=is_training, global_norm=True)
             
             nodes = self.add_group_relu(nodes)
         

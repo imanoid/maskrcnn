@@ -14,7 +14,7 @@ class PascalVocDataLoader(base.DataLoader):
                  config_name: str,
                  voc_dir: str,
                  image_shape: typing.List[float]=(256, 256),
-                 rpn_shape: typing.List[float]=None,
+                 rpn_shapes: typing.List[typing.List[int]]=None,
                  anchors: typing.List[typing.List[float]]=None,
                  object_labels: typing.List[typing.AnyStr]=None):
         self.datasets_dir = os.path.join(voc_dir, "ImageSets")
@@ -26,7 +26,7 @@ class PascalVocDataLoader(base.DataLoader):
         if not os.path.exists(self.pickle_dir):
             os.makedirs(self.pickle_dir)
         self.image_shape = image_shape  # (height, width)
-        self.rpn_shape = rpn_shape,
+        self.rpn_shapes = rpn_shapes,
         self.anchors = anchors
         self.object_labels = object_labels
 
@@ -49,16 +49,17 @@ class PascalVocDataLoader(base.DataLoader):
                 sample["objects"] = object_instances
 
                 # init RPN output
-                if self.rpn_shape is None:
+                if self.rpn_shapes is None:
                     print("No rpn shape specified. Not initializing rpn output!")
                 elif self.anchors is None:
                     print("No anchors specified. Not initializting rpn output!")
                 else:
-                    rpn_output, rpn_loss_mask = coding.encode_rpn_output(self.image_shape,
-                                                                         coding.objects_to_bboxes(object_instances),
-                                                                         self.rpn_shape,
-                                                                         self.anchors)
-                    sample["rpn_output"] = rpn_output
+                    rpn_regression_output, rpn_objectness_output, rpn_loss_mask = \
+                        coding.encode_rpn_output(coding.objects_to_bboxes(object_instances),
+                                                 self.rpn_shapes,
+                                                 self.anchors)
+                    sample["rpn_regression_output"] = rpn_regression_output
+                    sample["rpn_objectness_output"] = rpn_objectness_output
                     sample["rpn_loss_mask"] = rpn_loss_mask
 
                 #"objects": None,
@@ -86,6 +87,14 @@ class PascalVocDataLoader(base.DataLoader):
                 self._save_sample(sample, sample_name)
 
         return sample_names
+
+    def load_samples(self, sample_names) -> typing.List[typing.Dict]:
+        samples = list()
+
+        for sample_name in sample_names:
+            samples.append(self._load_sample(sample_name))
+
+        return samples
 
     # samples
     def _load_sample(self, sample_name: typing.AnyStr) -> typing.Dict:
