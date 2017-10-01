@@ -13,7 +13,7 @@ class PascalVocDataLoader(base.DataLoader):
     def __init__(self,
                  config_name: str,
                  voc_dir: str,
-                 image_shape: typing.List[float]=(256, 256),
+                 image_shape: typing.List[float]=(227, 227),
                  rpn_shapes: typing.List[typing.List[int]]=None,
                  anchors: typing.List[typing.List[float]]=None,
                  object_labels: typing.List[typing.AnyStr]=None):

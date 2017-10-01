@@ -1,10 +1,10 @@
 import tensorflow as tf
-import data.base as base
+import builder
 
 
-class SqueezeNetBuilder(base.GraphBuilder):
+class SqueezeNetBuilder(builder.base.GraphBuilder):
     def __init__(self, dtype=tf.float32):
-        base.GraphBuilder.__init__(self, dtype)
+        builder.base.GraphBuilder.__init__(self, dtype)
 
     def add_trunk(self,
                   root_output_node,  # input graph node

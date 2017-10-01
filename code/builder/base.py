@@ -6,17 +6,6 @@ from tensorflow.python.ops import gen_nn_ops
 import util
 
 
-# 'backport' from current tensorflow version to support gradient descent with MaxPoolWithArgmax
-@ops.RegisterGradient("MaxPoolWithArgmax")
-def _MaxPoolWithArgmaxGrad(op, grad, unused_argmax_grad):
-    return gen_nn_ops._max_pool_grad_with_argmax(op.inputs[0],
-                                                 grad,
-                                                 op.outputs[1],
-                                                 op.get_attr("ksize"),
-                                                 op.get_attr("strides"),
-                                                 padding=op.get_attr("padding"))
-
-
 class GraphBuilder(object):
     def __init__(self, dtype=tf.float32):
         self.dtype = dtype
@@ -86,10 +75,10 @@ class GraphBuilder(object):
                                  is_training=None,
                                  bias=True):
         with tf.name_scope("DepthwiseConvolution_%dx%d" % (kernel_size, kernel_size)):
-            n_outputs = tf.shape(node, 3)
+            n_outputs = node.shape[3].value
             stddev = 2.0 / np.sqrt(kernel_size * kernel_size)
             kernel = tf.Variable(
-                tf.truncated_normal([kernel_size, kernel_size, int(node.shape[3]), 1], 
+                tf.truncated_normal([kernel_size, kernel_size, n_outputs, 1],
                                     stddev=stddev,
                                     dtype=self.dtype))
             node = tf.nn.depthwise_conv2d_native(node,
@@ -139,7 +128,7 @@ class GraphBuilder(object):
             else:
                 if len(node.shape) == 4:
                     node = tf.reshape(node, [-1, int(node.shape[1]) * int(node.shape[2]) * int(node.shape[3])])
-                stddev = 2.0 / np.sqrt(node.shape[1])
+                stddev = 2.0 / np.sqrt(node.shape[1].value)
                 weights = tf.Variable(
                     tf.truncated_normal([int(node.shape[1]), n_outputs], stddev=stddev, dtype=self.dtype))
                 node = tf.matmul(node, weights)
@@ -200,8 +189,8 @@ class GraphBuilder(object):
             moving_mean = tf.Variable(tf.zeros(moments_shape, dtype=self.dtype))
             moving_var = tf.Variable(tf.ones(moments_shape, dtype=self.dtype))
 
-            offset = tf.Variable(np.zeros(moments_shape, dtype=self.dtype))
-            scale = tf.Variable(np.ones(moments_shape, dtype=self.dtype))
+            offset = tf.Variable(tf.zeros(moments_shape, dtype=self.dtype))
+            scale = tf.Variable(tf.ones(moments_shape, dtype=self.dtype))
 
             def training():
                 [batch_mean, batch_var] = tf.nn.moments(node, moments_axes)
@@ -226,8 +215,8 @@ class GraphBuilder(object):
                             n_groups):                        
         with tf.name_scope("ChannelShuffle"):
             input_shape = node.shape
-            node = tf.reshape(node, (*input_shape[0:3], n_groups, -1))
+            node = tf.reshape(node, (-1, input_shape[1].value, input_shape[2].value, n_groups, int(input_shape[3].value / n_groups)))
             node = tf.transpose(node, (0, 1, 2, 4, 3))
-            node = tf.reshape(node, input_shape)
+            node = tf.reshape(node, (-1, input_shape[1].value, input_shape[2].value, input_shape[3].value))
         
         return node

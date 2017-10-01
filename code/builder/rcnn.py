@@ -1,18 +1,18 @@
 import tensorflow as tf
-import data.squeezenet as squeezenet
+import builder
 import typing
 import data.coding as coding
 
 
-class RCNNBuilder(base.GraphBuilder):
+class RCNNBuilder(builder.base.GraphBuilder):
     def __init__(self, dtype=tf.float32):
-        base.GraphBuilder.__init__(self, dtype)
+        builder.base.GraphBuilder.__init__(self, dtype)
 
     def rpn_bboxes(self,
                    objectness_nodes: tf.Tensor,
                    regression_nodes: tf.Tensor,
-                   anchors: typing.List[typing.List[float, float]],
-                   input_shape: typing.List[int, int],
+                   anchors: typing.List[typing.List[float]],
+                   input_shape: typing.List[int],
                    iou_threshold: int=0.7,
                    max_bboxes: int=100) \
             -> typing.Tuple[tf.Tensor, tf.Tensor]:

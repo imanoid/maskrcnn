@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 import builder.base as base
 
 
@@ -22,8 +23,8 @@ class ShuffleNetBuilder(base.GraphBuilder):
                   input_keepprob=None,  # input keep probability for dropout
                   conv_keepprob=None  # conv keep probability for dropout
                   ):
-        assert(first_conv_kernels // n_groups == first_conv_kernels / n_groups)
-        assert((first_conv_kernels / n_groups) * .25 == int((first_conv_kernels / n_groups) * .25))
+        assert(base_channels // n_groups == base_channels / n_groups)
+        assert((base_channels / n_groups) * .25 == int((base_channels / n_groups) * .25))
         
         with tf.name_scope("Segment1"):
             if input_keepprob is not None:
@@ -39,8 +40,6 @@ class ShuffleNetBuilder(base.GraphBuilder):
             node = self.add_maxpooling_layer(node,
                                              kernel_size=first_pool_ksize,
                                              strides=first_pool_stride)
-        nodes = self.add_channel_split(node,
-                                       n_groups)
         
         n_channels = base_channels
         
@@ -53,14 +52,24 @@ class ShuffleNetBuilder(base.GraphBuilder):
                         stride = 2
                     else:
                         stride = 1
-                    with tf.name_scope("ShuffleNetModule{}".format(i_module)):
-                        nodes = self.add_shuffle_module(nodes,
-                                                        batch_norm=batch_norm,
-                                                        is_training=is_training,
-                                                        bottleneck_ratio=bottleneck_ratio,
-                                                        stride=stride,
-                                                        n_channels=n_channels,
-                                                        conv_keepprob=conv_keepprob)
+
+                    if i_segment == i_module == 0:
+                        nodes = self.add_first_shuffle_module(node=node,
+                                                              n_groups=n_groups,
+                                                              is_training=is_training,
+                                                              bottleneck_ratio=bottleneck_ratio,
+                                                              stride=stride,
+                                                              n_channels=n_channels,
+                                                              conv_keepprob=conv_keepprob)
+                    else:
+                        with tf.name_scope("ShuffleNetModule{}".format(i_module)):
+                            nodes = self.add_shuffle_module(nodes,
+                                                            batch_norm=batch_norm,
+                                                            is_training=is_training,
+                                                            bottleneck_ratio=bottleneck_ratio,
+                                                            stride=stride,
+                                                            n_channels=n_channels,
+                                                            conv_keepprob=conv_keepprob)
                 if len(nodes) == 1:
                     segment_tail = nodes[0]
                 else:
@@ -70,7 +79,7 @@ class ShuffleNetBuilder(base.GraphBuilder):
                     segment_tail = self.add_batch_norm(segment_tail, is_training=is_training, global_norm=True)
                 segment_tails.append(tf.nn.relu(segment_tail))
             n_channels *= 2
-        return node
+        return segment_tails
     
     def add_upsampling_pyramid(self,
                                segment_tails,  # tails of the trunk segments outputs
@@ -97,7 +106,7 @@ class ShuffleNetBuilder(base.GraphBuilder):
         if stride == 1:            
             n_branch_output_channels = n_channels
         elif stride == 2:
-            n_input_channels = nodes[0].shape[3] * n_groups
+            n_input_channels = nodes[0].shape[3].value * n_groups
             n_branch_output_channels = n_channels - n_input_channels
         else:
             raise ValueError("Stride {} is invalid for shuffle module!")
@@ -142,7 +151,7 @@ class ShuffleNetBuilder(base.GraphBuilder):
                                                  batch_norm=batch_norm,
                                                  is_training=is_training,
                                                  bias=False)
-            node = self.add_channel_shuffle(node)
+            node = self.add_channel_shuffle(node, n_groups)
             nodes = self.add_channel_split(node, n_groups)
         
         with tf.name_scope("ExpansionGroupConv"):
@@ -165,6 +174,84 @@ class ShuffleNetBuilder(base.GraphBuilder):
                                                               strides=2)
                 nodes = self.add_group_concat_layer(input_nodes, nodes)
         
+        return nodes
+
+    def add_first_shuffle_module(self,
+                                 node,  # input node
+                                 n_groups,  # number of output groups
+                                 n_channels,  # number of output channels
+                                 batch_norm=False,  # if True, batch normalization is added
+                                 is_training=None,  # pass variable indicating if network is training
+                                 bottleneck_ratio=0.25,  # channel reduction ratio
+                                 stride=1,  # stride of 3x3 conv
+                                 conv_keepprob=None  # conv keep probability for dropout
+                                 ):
+        if stride == 1:
+            n_branch_output_channels = n_channels
+        elif stride == 2:
+            n_input_channels = node.shape[3].value
+            n_branch_output_channels = n_channels - n_input_channels
+        else:
+            raise ValueError("Stride {} is invalid for shuffle module!")
+
+        n_hidden_channels = n_branch_output_channels * bottleneck_ratio
+
+        assert (n_hidden_channels == int(n_hidden_channels))
+
+        n_hidden_channels = int(n_hidden_channels)
+
+        input_nodes = self.add_channel_split(node, n_groups)
+
+        with tf.name_scope("InputActivation"):
+            if batch_norm:
+                node = self.add_batch_norm(node, is_training=is_training, global_norm=True)
+
+            node = tf.nn.relu(node)
+
+        with tf.name_scope("ReductionConv"):
+            if conv_keepprob is not None:
+                node = self.add_dropout_layer(node, conv_keepprob)
+            node = self.add_conv_layer(node,
+                                       n_outputs=n_hidden_channels,
+                                       kernel_size=1,
+                                       strides=1,
+                                       batch_norm=batch_norm,
+                                       is_training=is_training,
+                                       bias=False)
+
+        with tf.name_scope("InnerConvShuffle"):
+            if conv_keepprob is not None:
+                node = self.add_dropout_layer(node, conv_keepprob)
+
+            node = self.add_depthwise_conv_layer(node,
+                                                 kernel_size=3,
+                                                 strides=stride,
+                                                 activation=None,
+                                                 batch_norm=batch_norm,
+                                                 is_training=is_training,
+                                                 bias=False)
+            nodes = self.add_channel_split(node, n_groups)
+
+        with tf.name_scope("ExpansionGroupConv"):
+            if conv_keepprob is not None:
+                node = self.add_group_dropout_layer(nodes, conv_keepprob)
+
+            nodes = self.add_group_conv_layer(nodes,
+                                              n_outputs=n_branch_output_channels,
+                                              kernel_size=1,
+                                              strides=1,
+                                              activation=None,
+                                              bias=False)
+
+        with tf.name_scope("ResidualConnection"):
+            if stride == 1:
+                nodes = self.add_group_add_layer(input_nodes, nodes)
+            else:
+                input_nodes = self.add_group_avgpooling_layer(input_nodes,
+                                                              kernel_size=3,
+                                                              strides=2)
+                nodes = self.add_group_concat_layer(input_nodes, nodes)
+
         return nodes
 
     def add_classifier_head(self,
@@ -191,22 +278,22 @@ class ShuffleNetBuilder(base.GraphBuilder):
                              is_training=None,
                              bias=True):
         n_groups = len(nodes)
-        n_group_size = n_outputs / n_groups
-        
-        assert(n_group_size == int(n_group_size))
-        
+        n_created_outputs = 0
+
         with tf.name_scope("GroupedConvolution_%dx%d" % (kernel_size, kernel_size)):
             output_nodes = list()
             for node in nodes:
-                output_nodes = self.add_conv_layer(node,
-                                                   n_group_size,
-                                                   kernel_size=kernel_size,
-                                                   strides=strides,
-                                                   activation=activation,
-                                                   batch_norm=batch_norm,
-                                                   split=split,
-                                                   is_training=is_training,
-                                                   bias=bias)
+                n_group_outputs = min(int(np.ceil(n_outputs / n_groups)), n_outputs - n_created_outputs)
+                output_nodes.append(self.add_conv_layer(node,
+                                                        n_group_outputs,
+                                                        kernel_size=kernel_size,
+                                                        strides=strides,
+                                                        activation=activation,
+                                                        batch_norm=batch_norm,
+                                                        split=split,
+                                                        is_training=is_training,
+                                                        bias=bias))
+                n_created_outputs += n_group_outputs
         return output_nodes
     
     def add_group_add_layer(self,
@@ -216,7 +303,7 @@ class ShuffleNetBuilder(base.GraphBuilder):
         with tf.name_scope("GroupAdd"):
             output_nodes = list()
             for i_node in range(len(nodes1)):
-                output_nodes.append(tf.add(nodes1, nodes2))
+                output_nodes.append(tf.add(nodes1[i_node], nodes2[i_node]))
         
         return output_nodes
     
@@ -277,13 +364,13 @@ class ShuffleNetBuilder(base.GraphBuilder):
             with tf.name_scope("GroupSplit"):
                 nodes = list()
                 
-                input_channels = node.shape[3]
-                group_size = (input_channels / n_groups) * .25
+                input_channels = node.shape[3].value
+                group_size = int(np.ceil(input_channels / n_groups))
+
                 group_start = 0
-                group_end = group_size
-                for group in n_groups:
+                for group in range(n_groups):
+                    group_end = min(group_start + group_size, input_channels)
                     nodes.append(node[:, :, :, group_start:group_end])
                     group_start += group_size
-                    group_end += group_size
             
             return nodes

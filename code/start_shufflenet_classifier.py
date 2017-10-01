@@ -6,28 +6,35 @@ import tensorflow as tf
 import random
 import data
 import builder
+import util
 
 
 class ShufflenetClassifier(object):
     def __init__(self,
+                 name,
                  n_classes,
                  input_resolution,
                  multiclass=True,
                  batch_norm=True):
+        self.name = name
         self.n_classes = n_classes
         self.input_resolution = input_resolution
         self.batch_norm = batch_norm
         self.multiclass = multiclass
         self.builder = builder.shufflenet.ShuffleNetBuilder()
-        self.data_loader = data.pascal.PascalVocDataLoader()
+        self.data_loader = \
+            data.pascal.PascalVocDataLoader(config_name="{}_dataloader".format(name),
+                                            voc_dir="/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012",
+                                            image_shape=input_resolution)
 
         # dataset variables
-        self.minibatch_loader = None
-        self.test_samples = None
+        self.train_minibatch_loader = None
+        self.test_minibatch_loader = None
 
         # graph variables
         self.inputs = None
         self.true_outputs = None
+        self.pred_class = None
         self.is_training = None
         self.input_keepprob = None
         self.conv_keepprob = None
@@ -38,33 +45,46 @@ class ShufflenetClassifier(object):
         self.summary_op = None
         self.graph = None
 
-    def initialize_classifier(self):
-        self.data_loader.initialize_data()
+        # paths
+        self.train_dir = None
+        self.valid_dir = None
+        self.latest_checkpoints_dir = None
+        self.best_checkpoints_dir = None
+        self.train_state_path = None
+
+    def _init_samples(self):
+        # self.data_loader.initialize_data()
         sample_names = self.data_loader.load_sample_names()
         random.shuffle(sample_names)
         self.test_samples = sample_names[0:50]
-        train_samples = sample_names[50:]
-        self.minibatch_loader = data.base.MulticlassMinibatchLoader(self.data_loader, train_samples, 20)
+        self.train_samples = sample_names[50:]
 
-    def _save_checkpoint(self, path):
-        pass
+    def _init_minibatch_loaders(self):
+        self.train_minibatch_loader = data.minibatch.MinibatchLoader(self.data_loader, self.train_samples, 20)
+        self.test_minibatch_loader = data.minibatch.MinibatchLoader(self.data_loader, self.test_samples, 20)
 
-    def _save_datasets(self, path):
-        pass
+    def _init_paths(self):
+        tensorlog_dir = "/media/imanoid/Data/workspace/data/tensorlog/"
+        run_log = os.path.join(tensorlog_dir, self.name)
+        self.train_dir = os.path.join(run_log, "train")
+        self.valid_dir = os.path.join(run_log, "valid")
+        self.latest_checkpoints_dir = os.path.join(run_log, "latest_checkpoints")
+        self.best_checkpoints_dir = os.path.join(run_log, "best_checkpoints")
+        self.train_state_path = os.path.join(run_log, "state.pickle")
 
-    def save_classifier(self, path):
-        pass
+        if not os.path.isdir(self.train_dir):
+            os.makedirs(self.train_dir)
 
-    def _load_checkpoint(self, path):
-        pass
+        if not os.path.isdir(self.valid_dir):
+            os.makedirs(self.valid_dir)
 
-    def _load_datasets(self, path):
-        pass
+        if not os.path.isdir(self.latest_checkpoints_dir):
+            os.makedirs(self.latest_checkpoints_dir)
 
-    def load_classifier(self, path):
-        pass
+        if not os.path.isdir(self.best_checkpoints_dir):
+            os.makedirs(self.best_checkpoints_dir)
 
-    def build_graph(self):
+    def _init_graph(self):
         self.graph = tf.Graph()
 
         with self.graph.as_default():
@@ -99,10 +119,7 @@ class ShufflenetClassifier(object):
                                                             fc_keepprob=fc_keepprob  # fc keep probability for dropout
                                                             )
 
-            if self.multiclass:
-                pred_outputs = tf.reshape(pred_outputs, [-1, self.n_classes])
-            else:
-                pred_outputs = tf.reshape(pred_outputs, [-1, self.n_classes])
+            pred_outputs = tf.reshape(pred_outputs, [-1, self.n_classes])
 
             # training
             if self.multiclass:
@@ -117,7 +134,9 @@ class ShufflenetClassifier(object):
                 optimiser = tf.train.AdamOptimizer(learning_rate=1e-3, epsilon=1e-8).minimize(loss)
 
             # testing
-            correct_pred = tf.equal(tf.argmax(pred_outputs, 1), tf.argmax(true_outputs, 1))
+            self.pred_class = tf.argmax(pred_outputs, 1)
+            true_class = tf.argmax(true_outputs, 1)
+            correct_pred = tf.equal(self.pred_class, true_class)
             accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
             tf.summary.scalar('accuracy', accuracy)
 
@@ -134,63 +153,73 @@ class ShufflenetClassifier(object):
             self.accuracy = accuracy
             self.summary_op = summary_op
 
+            self.checkpoint_saver = tf.train.Saver()
+
+    def _init_summary_writers(self):
+        # summary writers
+        self.train_writer = tf.summary.FileWriter(self.train_dir, graph=self.graph)
+        self.valid_writer = tf.summary.FileWriter(self.valid_dir, graph=self.graph)
+
+    def initialize_classifier(self):
+        self._init_samples()
+        self._init_minibatch_loaders()
+        self._init_paths()
+        self._init_graph()
+        self._init_summary_writers()
+
+    def _load_checkpoint(self, path, session):
+        self.checkpoint_saver.restore(session, tf.train.latest_checkpoint(path))
+
+    def _save_checkpoint(self, path, session):
+        self.checkpoint_saver.save(session, path)
+
+    def _latest_checkpoint_exists(self):
+        return os.path.exists(os.path.join(self.latest_checkpoints_dir, "checkpoint"))
+
+    def _load_latest_checkpoint(self, session):
+        self._load_checkpoint(self.latest_checkpoints_dir, session)
+
+    def _save_latest_checkpoint(self, session):
+        self._save_checkpoint(self.latest_checkpoints_dir, session)
+
+    def _save_best_checkpoint(self, session):
+        self._save_checkpoint(self.best_checkpoints_dir, session)
+
+    def _train_state_exists(self):
+        return os.path.exists(self.train_state_path)
+
+    def _load_train_state(self):
+        return pickle.load(open(self.train_state_path, "rb"))
+
+    def _save_train_state(self, state):
+        pickle.dump(state, open(self.train_state_path, "wb"))
+
     def train(self):
-        # TODO: properly define these
-
-        train_dir = ""
-        valid_dir = ""
-        latest_checkpoints_dir = ""
-        best_checkpoints_dir = ""
-        state_path = ""
-
         with self.graph.as_default():
             # Init the variables
             init = tf.global_variables_initializer()
-
-            # Prepare to save checkpoints
-            latest_checkpoint_saver = tf.train.Saver()
-            best_checkpoint_saver = tf.train.Saver()
-
-            # summaries
-
-            # init dirs
-            if not os.path.isdir(train_dir):
-                os.makedirs(train_dir)
-
-            if not os.path.isdir(valid_dir):
-                os.makedirs(valid_dir)
-
-            if not os.path.isdir(latest_checkpoints_dir):
-                os.makedirs(latest_checkpoints_dir)
-
-            if not os.path.isdir(best_checkpoints_dir):
-                os.makedirs(best_checkpoints_dir)
-
-            # summary writers
-            train_writer = tf.summary.FileWriter(train_dir, graph=tf.get_default_graph())
-            valid_writer = tf.summary.FileWriter(valid_dir, graph=tf.get_default_graph())
 
             max_epochs = 100000
             batch_size = 10
             report_epochs = 25
 
-            best_valid_loss = sys.float_info.max
-
-            with tf.Session() as sess:
-                step = 1
-
-                if os.path.exists(state_path):
-                    state = pickle.load(open(state_path, "rb"))
-                    step = state["step"]
-
-                if os.path.exists(os.path.join(latest_checkpoints_dir, "checkpoint")):
-                    latest_checkpoint_saver.restore(sess, tf.train.latest_checkpoint(latest_checkpoints_dir))
+            with tf.Session() as session:
+                if self._train_state_exists():
+                    state = self._load_train_state()
                 else:
-                    sess.run(init)
+                    state = {
+                        "step": 1,
+                        "best_valid_loss": sys.float_info.max
+                    }
 
-                while step < max_epochs:
-                    batch_samples, batch_labels = self.minibatch_loader.random_minibatch()
-                    train_loss, train_acc, _, train_summary = sess.run([self.loss,
+                if self._latest_checkpoint_exists():
+                    self._load_latest_checkpoint(session)
+                else:
+                    session.run(init)
+
+                while state["step"] < max_epochs:
+                    batch_samples, batch_labels = self.train_minibatch_loader.random_minibatch()
+                    train_loss, train_acc, _, train_summary = session.run([self.loss,
                                                                         self.accuracy,
                                                                         self.optimiser,
                                                                         self.summary_op],
@@ -200,60 +229,63 @@ class ShufflenetClassifier(object):
                                                                                   self.input_keepprob: .95,
                                                                                   self.conv_keepprob: .9,
                                                                                   self.fc_keepprob: .6})
-                    train_writer.add_summary(train_summary, step)
-                    train_writer.flush()
+                    self.train_writer.add_summary(train_summary, state["step"])
+                    self.train_writer.flush()
 
-                    state = {
-                        "step": step
-                    }
-                    pickle.dump(state, open(state_path, "wb"))
+                    self._save_train_state(state)
 
-                    if step % report_epochs == 0:
-                        valid_loss, valid_acc, valid_summary, valid_logits, valid_labels = sess.run(
-                            [loss, accuracy, summary_op, logits, true_outputs],
-                            feed_dict={inputs: valid_dataset,
-                                       true_outputs: valid_labels,
-                                       is_training: False,
-                                       input_keepprob: 1,
-                                       conv_keepprob: 1,
-                                       fc_keepprob: 1})
+                    if state["step"] % report_epochs == 0:
+                        for (valid_images, valid_outputs) in self.test_minibatch_loader:
+                            valid_loss, valid_acc, valid_summary = session.run(
+                                [self.loss, self.accuracy, self.summary_op],
+                                feed_dict={self.inputs: valid_images,
+                                           self.true_outputs: valid_outputs,
+                                           self.is_training: False,
+                                           self.input_keepprob: 1,
+                                           self.conv_keepprob: 1,
+                                           self.fc_keepprob: 1})
 
-                        print("Epoch " + str(step))
-                        print("Training Loss={:.6f}".format(train_loss))
-                        print("Training Accuracy={:.6f}".format(train_acc))
-                        # pred_labels = np.argmax(train_logits, 1)
-                        # true_labels = np.argmax(batch_labels, 1)
-                        # for i in range(l en(pred_labels)):
-                        #     print("%s==%s" % (pred_labels[i], true_labels[i]))
-                        # print
+                            print("Epoch " + str(state["step"]))
+                            print("Training Loss={:.6f}".format(train_loss))
+                            print("Training Accuracy={:.6f}".format(train_acc))
+                            # pred_labels = np.argmax(train_logits, 1)
+                            # true_labels = np.argmax(batch_labels, 1)
+                            # for i in range(l en(pred_labels)):
+                            #     print("%s==%s" % (pred_labels[i], true_labels[i]))
+                            # print
 
-                        print("Valid Loss={:.6f}".format(valid_loss))
-                        print("Valid Accuracy={:.6f}".format(valid_acc))
-                        # pred_labels = np.argmax(valid_logits, 1)
-                        # true_labels = np.argmax(valid_labels, 1)
-                        # for i in range(len(pred_labels)):
-                        #     print("%s==%s" % (pred_labels[i], true_labels[i]))
-                        # print
+                            print("Valid Loss={:.6f}".format(valid_loss))
+                            print("Valid Accuracy={:.6f}".format(valid_acc))
+                            # pred_labels = np.argmax(valid_logits, 1)
+                            # true_labels = np.argmax(valid_labels, 1)
+                            # for i in range(len(pred_labels)):
+                            #     print("%s==%s" % (pred_labels[i], true_labels[i]))
+                            # print
 
-                        valid_writer.add_summary(valid_summary, step)
-                        valid_writer.flush()
+                            self.valid_writer.add_summary(valid_summary, state["step"])
+                            self.valid_writer.flush()
 
-                        latest_checkpoint_saver.save(sess, latest_checkpoint_path)
+                            if valid_loss > state["best_valid_loss"]:
+                                state["best_valid_loss"] = valid_loss
+                                self._save_best_checkpoint(session)
 
-                        if valid_loss > best_valid_loss:
-                            best_valid_loss = valid_loss
-                            best_checkpoint_saver.save(sess, best_checkpoint_path)
-
-                    step += 1
+                    state["step"] += 1
 
                 print("Training finished!")
-                test_loss, test_acc = sess.run([loss, accuracy],
-                                               feed_dict={inputs: test_dataset,
-                                                          true_outputs: test_labels,
-                                                          is_training: False,
-                                                          input_keepprob: 1,
-                                                          conv_keepprob: 1,
-                                                          fc_keepprob: 1})
+                # test_loss, test_acc = session.run([self.loss, self.accuracy],
+                #                                feed_dict={self.inputs: test_dataset,
+                #                                           self.true_outputs: test_labels,
+                #                                           self.is_training: False,
+                #                                           self.input_keepprob: 1,
+                #                                           self.conv_keepprob: 1,
+                #                                           self.fc_keepprob: 1})
+                #
+                # print("Test Loss=" + "{:.6f}".format(test_loss))
+                # print("Test Accuracy=" + "{:.6f}".format(test_acc))
 
-                print("Testation Loss=" + "{:.6f}".format(test_loss))
-                print("Testation Accuracy=" + "{:.6f}".format(test_acc))
+if __name__ == "__main__":
+    classifier = ShufflenetClassifier("pascal_voc_multiclassifier",
+                                      n_classes=20,
+                                      input_resolution=[227, 227])
+    classifier.initialize_classifier()
+    classifier.train()
