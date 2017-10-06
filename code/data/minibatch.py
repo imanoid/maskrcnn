@@ -9,14 +9,14 @@ def multiclass_batch(samples: typing.List[typing.Dict]) -> typing.Tuple[typing.A
 
     first_sample = samples[0]
     first_image = first_sample["image"]
-    first_labels = first_sample["labels"]
+    first_labels = first_sample["multiclass_onehot"]
 
     images = np.zeros((n_samples, *first_image.shape), np.float32)
     labels = np.zeros((n_samples, len(first_labels)), np.float32)
 
     for i_sample, sample in enumerate(samples):
         images[i_sample, :, :, :] = sample["image"]
-        labels[i_sample, :] = sample["labels"]
+        labels[i_sample, :] = sample["multiclass_onehot"]
 
     return images, labels
 

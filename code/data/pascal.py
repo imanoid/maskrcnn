@@ -17,6 +17,14 @@ class PascalVocDataLoader(base.DataLoader):
                  rpn_shapes: typing.List[typing.List[int]]=None,
                  anchors: typing.List[typing.List[float]]=None,
                  object_labels: typing.List[typing.AnyStr]=None):
+        """
+        :param config_name:
+        :param voc_dir:
+        :param image_shape:
+        :param rpn_shapes:
+        :param anchors:
+        :param object_labels:
+        """
         self.datasets_dir = os.path.join(voc_dir, "ImageSets")
         self.classificationset_dir = os.path.join(self.datasets_dir, "Main")
         self.segmentationset_dir = os.path.join(self.datasets_dir, "Segmentation")
@@ -36,14 +44,20 @@ class PascalVocDataLoader(base.DataLoader):
         for file_name in os.listdir(self.images_dir):
             sample_name = file_name.replace(".jpg", "")
             sample_names.append(sample_name)
-
             # init sample
             sample = dict()
 
             # init image
             sample["image"] = self._load_image_from_sample(sample_name)
 
-            if False:
+            self._save_sample(sample, sample_name)
+        print("samples initialized")
+        # rpn
+        if False:
+            rpn_sample_names = list()
+            for sample_name in sample_names:
+                sample = self._load_sample(sample_name)
+
                 # init bounding boxes and masks
                 object_instances = self._load_objects_from_sample(sample_name)
                 sample["objects"] = object_instances
@@ -65,12 +79,12 @@ class PascalVocDataLoader(base.DataLoader):
                 #"objects": None,
                           #"segmentation": None,
                           #"labels": None}
-            self._save_sample(sample, sample_name)
+                self._save_sample(sample, sample_name)
 
-        self._save_sample_names(sample_names)
-
+        print("rpn samples initialized")
+        multiclass_sample_names = list()
         # init sample labels
-        labels = self._load_labels()
+        labels = self.load_labels()
         for label in labels:
             label_samples = self._load_image_files_from_label(label)
             for label_sample in label_samples:
@@ -85,14 +99,19 @@ class PascalVocDataLoader(base.DataLoader):
             if "labels" in sample:
                 sample["multiclass_onehot"] = coding.make_multiclass_onehot(sample["labels"], labels)
                 self._save_sample(sample, sample_name)
+                if sample_name not in multiclass_sample_names:
+                    multiclass_sample_names.append(sample_name)
 
-        return sample_names
+        self._save_sample_names(multiclass_sample_names, "multiclass")
+
+        print("multiclass samples initialized")
 
     def load_samples(self, sample_names) -> typing.List[typing.Dict]:
         samples = list()
 
         for sample_name in sample_names:
-            samples.append(self._load_sample(sample_name))
+            sample = self._load_sample(sample_name)
+            samples.append(sample)
 
         return samples
 
@@ -105,12 +124,12 @@ class PascalVocDataLoader(base.DataLoader):
         with open(os.path.join(self.pickle_dir, "{}.pickle".format(sample_name)), "wb") as f:
             pickle.dump(sample, f)
 
-    def load_sample_names(self) -> typing.List[typing.AnyStr]:
-        with open(os.path.join(self.pickle_dir, "sample_names.pickle"), "rb") as f:
+    def load_sample_names(self, task) -> typing.List[typing.AnyStr]:
+        with open(os.path.join(self.pickle_dir, "sample_names_{}.pickle".format(task)), "rb") as f:
             return pickle.load(f)
 
-    def _save_sample_names(self, sample_names: typing.List[typing.AnyStr]):
-        with open(os.path.join(self.pickle_dir, "sample_names.pickle"), "wb") as f:
+    def _save_sample_names(self, sample_names: typing.List[typing.AnyStr], task: typing.AnyStr):
+        with open(os.path.join(self.pickle_dir, "sample_names_{}.pickle".format(task)), "wb") as f:
             pickle.dump(sample_names, f)
 
     # images
@@ -131,7 +150,7 @@ class PascalVocDataLoader(base.DataLoader):
         height = int(size.find("height").text)
 
         object_boxes = []
-        labels = self._load_labels()
+        labels = self.load_labels()
 
         # initialize bounding boxes
         objs = ann.findall("object")
@@ -191,7 +210,7 @@ class PascalVocDataLoader(base.DataLoader):
         df = df[df['true'] == 1]
         return list(df['filename'].values)
 
-    def _load_labels(self):
+    def load_labels(self) -> typing.List[typing.AnyStr]:
         all_files = os.listdir(self.classificationset_dir)
         labels = sorted(list(set([filename.replace('.txt', '').strip().split('_')[0] for filename in all_files if filename.find("_") != -1])))
 

@@ -10,7 +10,7 @@ class DataLoader(object):
         pass
 
     @abc.abstractmethod
-    def load_samples(self, sample_names) -> typing.List[typing.Dict]:
+    def load_samples(self, sample_names, task) -> typing.List[typing.Dict]:
         pass
 
 

@@ -54,10 +54,10 @@ class ShufflenetClassifier(object):
 
     def _init_samples(self):
         # self.data_loader.initialize_data()
-        sample_names = self.data_loader.load_sample_names()
+        sample_names = self.data_loader.load_sample_names("multiclass")
         random.shuffle(sample_names)
-        self.test_samples = sample_names[0:50]
-        self.train_samples = sample_names[50:]
+        self.test_samples = sample_names[0:20]
+        self.train_samples = sample_names[20:]
 
     def _init_minibatch_loaders(self):
         self.train_minibatch_loader = data.minibatch.MinibatchLoader(self.data_loader, self.train_samples, 20)
@@ -235,7 +235,10 @@ class ShufflenetClassifier(object):
                     self._save_train_state(state)
 
                     if state["step"] % report_epochs == 0:
-                        for (valid_images, valid_outputs) in self.test_minibatch_loader:
+                        print("Epoch " + str(state["step"]))
+                        print("Training Loss={:.6f}".format(train_loss))
+                        print("Training Accuracy={:.6f}".format(train_acc))
+                        for (valid_images, valid_outputs) in self.test_minibatch_loader.sequential_minibatches():
                             valid_loss, valid_acc, valid_summary = session.run(
                                 [self.loss, self.accuracy, self.summary_op],
                                 feed_dict={self.inputs: valid_images,
@@ -245,9 +248,8 @@ class ShufflenetClassifier(object):
                                            self.conv_keepprob: 1,
                                            self.fc_keepprob: 1})
 
-                            print("Epoch " + str(state["step"]))
-                            print("Training Loss={:.6f}".format(train_loss))
-                            print("Training Accuracy={:.6f}".format(train_acc))
+                            self.valid_writer.add_summary(valid_summary, state["step"])
+                            self.valid_writer.flush()
                             # pred_labels = np.argmax(train_logits, 1)
                             # true_labels = np.argmax(batch_labels, 1)
                             # for i in range(l en(pred_labels)):
@@ -261,9 +263,6 @@ class ShufflenetClassifier(object):
                             # for i in range(len(pred_labels)):
                             #     print("%s==%s" % (pred_labels[i], true_labels[i]))
                             # print
-
-                            self.valid_writer.add_summary(valid_summary, state["step"])
-                            self.valid_writer.flush()
 
                             if valid_loss > state["best_valid_loss"]:
                                 state["best_valid_loss"] = valid_loss
@@ -287,5 +286,6 @@ if __name__ == "__main__":
     classifier = ShufflenetClassifier("pascal_voc_multiclassifier",
                                       n_classes=20,
                                       input_resolution=[227, 227])
+
     classifier.initialize_classifier()
     classifier.train()
