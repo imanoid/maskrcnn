@@ -108,7 +108,7 @@ class ShufflenetClassifier(object):
                                                    is_training=is_training,  # pass variable indicating if network is training
                                                    shuffle_segments=[4, 8, 4],
                                                    n_groups=8,
-                                                   base_channels=384,
+                                                   base_channels=192,
                                                    bottleneck_ratio=.25,
                                                    input_keepprob=input_keepprob,  # input keep probability for dropout
                                                    conv_keepprob=conv_keepprob  # conv keep probability for dropout
@@ -224,12 +224,12 @@ class ShufflenetClassifier(object):
                                                                            self.accuracy,
                                                                            self.optimiser,
                                                                            self.summary_op],
-                                                                           feed_dict={self.inputs: batch_samples,
-                                                                                  self.true_outputs: batch_labels,
-                                                                                  self.is_training: True,
-                                                                                  self.input_keepprob: .95,
-                                                                                  self.conv_keepprob: .9,
-                                                                                  self.fc_keepprob: .6},
+                                                                          feed_dict={self.inputs: batch_samples,
+                                                                                     self.true_outputs: batch_labels,
+                                                                                     self.is_training: True,
+                                                                                     self.input_keepprob: .95,
+                                                                                     self.conv_keepprob: .9,
+                                                                                     self.fc_keepprob: .6},
                                                                           run_metadata=run_metadata)
                     train_time = train_sw.stop() / batch_samples.shape[0]
                     train_writer.add_run_metadata(run_metadata, 'step{}'.format(state["step"]))
