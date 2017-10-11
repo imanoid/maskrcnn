@@ -22,6 +22,7 @@ class ShufflenetClassifier(object):
         self.batch_norm = batch_norm
         self.multiclass = multiclass
         self.builder = builder.shufflenet.ShuffleNetBuilder()
+        # self.builder = builder.squeezenet.SqueezeNetBuilder()
         self.data_loader = \
             data.pascal.PascalVocDataLoader(config_name="{}_dataloader".format(name),
                                             voc_dir="/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012",
@@ -113,6 +114,8 @@ class ShufflenetClassifier(object):
                                                    input_keepprob=input_keepprob,  # input keep probability for dropout
                                                    conv_keepprob=conv_keepprob  # conv keep probability for dropout
                                                    )
+
+            # segment_tails = self.builder.add_trunk(inputs)
 
             pred_outputs = self.builder.add_classifier_head(segment_tails[-1],  # output from the trunk
                                                             self.n_classes,  # number of outputs
