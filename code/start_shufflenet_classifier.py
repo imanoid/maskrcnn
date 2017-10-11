@@ -56,8 +56,8 @@ class ShufflenetClassifier(object):
         # self.data_loader.initialize_data()
         sample_names = self.data_loader.load_sample_names("multiclass")
         random.shuffle(sample_names)
-        self.test_samples = sample_names[0:20]
-        self.train_samples = sample_names[20:]
+        self.test_samples = sample_names[0:100]
+        self.train_samples = sample_names[100:]
 
     def _init_minibatch_loaders(self):
         self.train_minibatch_loader = data.minibatch.MinibatchLoader(self.data_loader, self.train_samples, 20)
@@ -155,17 +155,11 @@ class ShufflenetClassifier(object):
 
             self.checkpoint_saver = tf.train.Saver()
 
-    def _init_summary_writers(self):
-        # summary writers
-        self.train_writer = tf.summary.FileWriter(self.train_dir, graph=self.graph)
-        self.valid_writer = tf.summary.FileWriter(self.valid_dir, graph=self.graph)
-
     def initialize_classifier(self):
         self._init_samples()
         self._init_minibatch_loaders()
         self._init_paths()
         self._init_graph()
-        self._init_summary_writers()
 
     def _load_checkpoint(self, path, session):
         self.checkpoint_saver.restore(session, tf.train.latest_checkpoint(path))
@@ -195,13 +189,17 @@ class ShufflenetClassifier(object):
         pickle.dump(state, open(self.train_state_path, "wb"))
 
     def train(self):
+        train_sw = util.StopWatch()
         with self.graph.as_default():
+            # summary writers
+            train_writer = tf.summary.FileWriter(self.train_dir, graph=tf.get_default_graph())
+            valid_writer = tf.summary.FileWriter(self.valid_dir, graph=tf.get_default_graph())
+
             # Init the variables
             init = tf.global_variables_initializer()
 
             max_epochs = 100000
-            batch_size = 10
-            report_epochs = 25
+            report_epochs = 100
 
             with tf.Session() as session:
                 if self._train_state_exists():
@@ -219,18 +217,24 @@ class ShufflenetClassifier(object):
 
                 while state["step"] < max_epochs:
                     batch_samples, batch_labels = self.train_minibatch_loader.random_minibatch()
+                    train_sw.start()
+                    run_metadata = tf.RunMetadata()
+
                     train_loss, train_acc, _, train_summary = session.run([self.loss,
-                                                                        self.accuracy,
-                                                                        self.optimiser,
-                                                                        self.summary_op],
-                                                                       feed_dict={self.inputs: batch_samples,
+                                                                           self.accuracy,
+                                                                           self.optimiser,
+                                                                           self.summary_op],
+                                                                           feed_dict={self.inputs: batch_samples,
                                                                                   self.true_outputs: batch_labels,
                                                                                   self.is_training: True,
                                                                                   self.input_keepprob: .95,
                                                                                   self.conv_keepprob: .9,
-                                                                                  self.fc_keepprob: .6})
-                    self.train_writer.add_summary(train_summary, state["step"])
-                    self.train_writer.flush()
+                                                                                  self.fc_keepprob: .6},
+                                                                          run_metadata=run_metadata)
+                    train_time = train_sw.stop() / batch_samples.shape[0]
+                    train_writer.add_run_metadata(run_metadata, 'step{}'.format(state["step"]))
+                    train_writer.add_summary(train_summary, state["step"])
+                    train_writer.flush()
 
                     self._save_train_state(state)
 
@@ -238,35 +242,58 @@ class ShufflenetClassifier(object):
                         print("Epoch " + str(state["step"]))
                         print("Training Loss={:.6f}".format(train_loss))
                         print("Training Accuracy={:.6f}".format(train_acc))
+
+                        valid_loss_sum = 0
+                        valid_acc_sum = 0
+                        valid_samples_sum = 0
+
                         for (valid_images, valid_outputs) in self.test_minibatch_loader.sequential_minibatches():
-                            valid_loss, valid_acc, valid_summary = session.run(
-                                [self.loss, self.accuracy, self.summary_op],
+                            train_sw.start()
+                            run_metadata = tf.RunMetadata()
+                            valid_loss, valid_acc = session.run(
+                                [self.loss, self.accuracy],
                                 feed_dict={self.inputs: valid_images,
                                            self.true_outputs: valid_outputs,
                                            self.is_training: False,
                                            self.input_keepprob: 1,
                                            self.conv_keepprob: 1,
-                                           self.fc_keepprob: 1})
+                                           self.fc_keepprob: 1},
+                                run_metadata=run_metadata)
 
-                            self.valid_writer.add_summary(valid_summary, state["step"])
-                            self.valid_writer.flush()
-                            # pred_labels = np.argmax(train_logits, 1)
-                            # true_labels = np.argmax(batch_labels, 1)
-                            # for i in range(l en(pred_labels)):
-                            #     print("%s==%s" % (pred_labels[i], true_labels[i]))
-                            # print
+                            valid_samples = valid_images.shape[0]
+                            valid_time = train_sw.stop() / valid_samples
+                            valid_samples_sum += valid_samples
+                            valid_loss_sum += valid_samples * valid_loss
+                            valid_acc_sum += valid_samples * valid_acc
+                        print("Time per train sample: {:.2f}ms".format(train_time))
+                        print("Time per valid sample: {:.2f}ms".format(valid_time))
 
-                            print("Valid Loss={:.6f}".format(valid_loss))
-                            print("Valid Accuracy={:.6f}".format(valid_acc))
-                            # pred_labels = np.argmax(valid_logits, 1)
-                            # true_labels = np.argmax(valid_labels, 1)
-                            # for i in range(len(pred_labels)):
-                            #     print("%s==%s" % (pred_labels[i], true_labels[i]))
-                            # print
+                        valid_loss_total = valid_loss_sum / valid_samples_sum
+                        valid_acc_total = valid_acc_sum / valid_samples_sum
 
-                            if valid_loss > state["best_valid_loss"]:
-                                state["best_valid_loss"] = valid_loss
-                                self._save_best_checkpoint(session)
+                        valid_summary = tf.Summary(value=[tf.Summary.Value(tag="accuracy", simple_value=valid_loss_total),
+                                                          tf.Summary.Value(tag="loss", simple_value=valid_acc_total)])
+
+                        valid_writer.add_run_metadata(run_metadata, 'step{}'.format(state["step"]))
+                        valid_writer.add_summary(valid_summary, state["step"])
+                        valid_writer.flush()
+                        # pred_labels = np.argmax(train_logits, 1)
+                        # true_labels = np.argmax(batch_labels, 1)
+                        # for i in range(l en(pred_labels)):
+                        #     print("%s==%s" % (pred_labels[i], true_labels[i]))
+                        # print
+
+                        print("Valid Loss={:.6f}".format(valid_loss_total))
+                        print("Valid Accuracy={:.6f}".format(valid_acc_total))
+                        # pred_labels = np.argmax(valid_logits, 1)
+                        # true_labels = np.argmax(valid_labels, 1)
+                        # for i in range(len(pred_labels)):
+                        #     print("%s==%s" % (pred_labels[i], true_labels[i]))
+                        # print
+
+                        if valid_loss_total > state["best_valid_loss"]:
+                            state["best_valid_loss"] = valid_loss_total
+                            self._save_best_checkpoint(session)
 
                     state["step"] += 1
 
@@ -281,6 +308,7 @@ class ShufflenetClassifier(object):
                 #
                 # print("Test Loss=" + "{:.6f}".format(test_loss))
                 # print("Test Accuracy=" + "{:.6f}".format(test_acc))
+
 
 if __name__ == "__main__":
     classifier = ShufflenetClassifier("pascal_voc_multiclassifier",
