@@ -37,6 +37,8 @@ class GraphBuilder(object):
                     tf.truncated_normal([kernel_size, 1, n_outputs, n_outputs], stddev=stddev, dtype=self.dtype))
                 node = function(node, kernel2, strides=[1, strides, strides, 1], padding="SAME")
             else:
+                if kernel_size * kernel_size * int(node.shape[3]) == 0:
+                    print("breakpoint")
                 stddev = 2.0 / np.sqrt(kernel_size * kernel_size * int(node.shape[3]))
                 kernel = tf.Variable(
                     tf.truncated_normal([kernel_size, kernel_size, int(node.shape[3]), n_outputs], stddev=stddev,

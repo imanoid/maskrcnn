@@ -365,10 +365,15 @@ class ShuffleNetBuilder(base.GraphBuilder):
                 nodes = list()
                 
                 input_channels = node.shape[3].value
-                group_size = int(np.ceil(input_channels / n_groups))
+                base_size = int(np.floor(input_channels / n_groups))
+                leftover = input_channels - base_size * n_groups
 
                 group_start = 0
                 for group in range(n_groups):
+                    group_size = base_size
+                    if group < leftover:
+                        group_size += 1
+
                     group_end = min(group_start + group_size, input_channels)
                     nodes.append(node[:, :, :, group_start:group_end])
                     group_start += group_size

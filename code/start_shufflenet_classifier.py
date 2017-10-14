@@ -15,7 +15,9 @@ class ShufflenetClassifier(object):
                  n_classes,
                  input_resolution,
                  multiclass=True,
-                 batch_norm=True):
+                 batch_norm=True,
+                 voc_dir="/media/imanoid/DATA/workspace/data/VOCdevkit/VOC2012",
+                 tensorlog_dir="/media/imanoid/DATA/workspace/data/tensorlog/"):
         self.name = name
         self.n_classes = n_classes
         self.input_resolution = input_resolution
@@ -25,8 +27,9 @@ class ShufflenetClassifier(object):
         # self.builder = builder.squeezenet.SqueezeNetBuilder()
         self.data_loader = \
             data.pascal.PascalVocDataLoader(config_name="{}_dataloader".format(name),
-                                            voc_dir="/media/imanoid/Data/workspace/data/VOCdevkit/VOC2012",
+                                            voc_dir=voc_dir,
                                             image_shape=input_resolution)
+        self.tensorlog_dir = tensorlog_dir
 
         # dataset variables
         self.train_minibatch_loader = None
@@ -65,8 +68,7 @@ class ShufflenetClassifier(object):
         self.test_minibatch_loader = data.minibatch.MinibatchLoader(self.data_loader, self.test_samples, 20)
 
     def _init_paths(self):
-        tensorlog_dir = "/media/imanoid/Data/workspace/data/tensorlog/"
-        run_log = os.path.join(tensorlog_dir, self.name)
+        run_log = os.path.join(self.tensorlog_dir, self.name)
         self.train_dir = os.path.join(run_log, "train")
         self.valid_dir = os.path.join(run_log, "valid")
         self.latest_checkpoints_dir = os.path.join(run_log, "latest_checkpoints")
@@ -235,7 +237,6 @@ class ShufflenetClassifier(object):
                                                                                      self.fc_keepprob: .6},
                                                                           run_metadata=run_metadata)
                     train_time = train_sw.stop() / batch_samples.shape[0]
-                    train_writer.add_run_metadata(run_metadata, 'step{}'.format(state["step"]))
                     train_writer.add_summary(train_summary, state["step"])
                     train_writer.flush()
 
@@ -274,10 +275,9 @@ class ShufflenetClassifier(object):
                         valid_loss_total = valid_loss_sum / valid_samples_sum
                         valid_acc_total = valid_acc_sum / valid_samples_sum
 
-                        valid_summary = tf.Summary(value=[tf.Summary.Value(tag="accuracy", simple_value=valid_loss_total),
-                                                          tf.Summary.Value(tag="loss", simple_value=valid_acc_total)])
+                        valid_summary = tf.Summary(value=[tf.Summary.Value(tag="accuracy", simple_value=valid_acc_total),
+                                                          tf.Summary.Value(tag="loss", simple_value=valid_loss_total)])
 
-                        valid_writer.add_run_metadata(run_metadata, 'step{}'.format(state["step"]))
                         valid_writer.add_summary(valid_summary, state["step"])
                         valid_writer.flush()
                         # pred_labels = np.argmax(train_logits, 1)
