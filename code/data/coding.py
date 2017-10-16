@@ -276,3 +276,43 @@ def make_multiclass_onehot(labels: typing.List,
 
     return onehot_vector
 
+
+def index_of(a: np.ndarray, b: np.ndarray) -> int:
+    """
+    :param a: array to look in
+    :param b: element to search for
+    :return: int
+    """
+    n = a.shape[0]
+
+    for i in range(n):
+        if (a[i, :] == b).all():
+            return i
+
+    return -1
+
+
+def detect_blobs(image: np.ndarray, ignore_colors: np.ndarray) \
+        -> typing.Tuple[np.ndarray, np.ndarray]:
+    """
+    detect blob areas of equally colored pixels.
+    :param image: (H,W,RGB) image to search
+    :param ignore_colors: (N,R,G,B) list of colors to ignore
+    :return: (binary masks, bounding boxes)
+    """
+    height = image.shape[0]
+    width = image.shape[1]
+
+    processed = np.zeros((height, width))
+    masks = np.zeros((height, width, 0))
+    bboxes = list()
+
+    colors = np.vstack({tuple(r) for r in image.reshape(-1, 3)})
+    print(colors.shape)
+
+    n_colors = colors.shape[0]
+    for i_color in range(n_colors):
+        color = colors[i_color, :]
+        if index_of(ignore_colors, color) == -1:
+            mask = np.sum(np.abs(image - color.reshape(1, 1, 3)), 2) == 0
+            masks = np.concatenate([masks, mask.reshape(mask.shape[0], mask.shape[1], 1)], 2)
