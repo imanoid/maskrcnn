@@ -232,8 +232,8 @@ class ShufflenetClassifier(object):
                                                                           feed_dict={self.inputs: batch_samples,
                                                                                      self.true_outputs: batch_labels,
                                                                                      self.is_training: True,
-                                                                                     self.input_keepprob: 1,
-                                                                                     self.conv_keepprob: 1,
+                                                                                     self.input_keepprob: .95,
+                                                                                     self.conv_keepprob: .9,
                                                                                      self.fc_keepprob: .6},
                                                                           run_metadata=run_metadata)
                     train_time = train_sw.stop() / batch_samples.shape[0]
@@ -314,7 +314,7 @@ class ShufflenetClassifier(object):
 
 
 if __name__ == "__main__":
-    classifier = ShufflenetClassifier("pascal_voc_multiclassifier_nofulldrop",
+    classifier = ShufflenetClassifier("pascal_voc_multiclassifier_center_crop",
                                       n_classes=20,
                                       input_resolution=[227, 227])
 

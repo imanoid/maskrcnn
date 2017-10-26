@@ -1,5 +1,6 @@
 import numpy as np
 import typing
+from scipy import misc
 from data import base
 
 
@@ -316,3 +317,27 @@ def detect_blobs(image: np.ndarray, ignore_colors: np.ndarray) \
         if index_of(ignore_colors, color) == -1:
             mask = np.sum(np.abs(image - color.reshape(1, 1, 3)), 2) == 0
             masks = np.concatenate([masks, mask.reshape(mask.shape[0], mask.shape[1], 1)], 2)
+
+
+def center_crop(image: np.ndarray, target_size: typing.List[int]) -> np.ndarray:
+    target_height = target_size[0]
+    target_width = target_size[1]
+    img_height = image.shape[0]
+    img_width = image.shape[1]
+
+    img_ratio = img_height / img_width
+    target_ratio = target_height / target_width
+
+    if img_ratio > target_ratio:
+        crop_width = img_width
+        crop_height = round(crop_width * target_ratio)
+    else:
+        crop_height = img_height
+        crop_width = round(crop_height / target_ratio)
+
+    left = np.ceil((img_width - crop_width) / 2.).astype(np.int32)
+    top = np.ceil((img_height - crop_height) / 2.).astype(np.int32)
+    right = np.floor((img_width + crop_width) / 2.).astype(np.int32)
+    bottom = np.floor((img_height + crop_height) / 2.).astype(np.int32)
+
+    return misc.imresize(image[top:bottom, left:right], target_size)

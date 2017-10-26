@@ -136,11 +136,8 @@ class PascalVocDataLoader(base.DataLoader):
     def _load_image_from_sample(self, sample_name: typing.AnyStr) -> np.ndarray:
         # read image
         image_data = ndimage.imread(os.path.join(self.images_dir, sample_name + ".jpg")).astype(np.float32)
-
-        # resize image
-        image_data = misc.imresize(image_data, self.image_shape)
-
-        return image_data
+        
+        return coding.center_crop(image_data, self.image_shape)
 
     # objects
     def _load_objects_from_sample(self, sample_name: typing.AnyStr) -> typing.List[base.ObjectInstance]:
